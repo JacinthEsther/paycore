@@ -1,0 +1,10 @@
+# Keep local secrets, build output and the UI out of the API image.
+paycore-local.properties
+data/
+target/
+paycore-ui/
+.git/
+.idea/
+.vscode/
+*.iml
+HELP.md
