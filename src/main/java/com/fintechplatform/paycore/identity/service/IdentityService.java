@@ -17,20 +17,15 @@ public class IdentityService {
     }
 
 
+    /**
+     * One password identity per customer is enforced by the unique index
+     * uk_identity_customer_provider (V3), not by a query before the insert.
+     */
     @Transactional
     public Identity createPasswordIdentity(
             Customer customer,
             String passwordHash
     ) {
-        if (identityRepository.existsByCustomerAndProvider(
-                customer,
-                IdentityProvider.PASSWORD
-        )) {
-            throw new IllegalStateException(
-                    "Password identity already exists"
-            );
-        }
-
         Identity identity =
                 Identity.createPasswordIdentity(
                         customer,

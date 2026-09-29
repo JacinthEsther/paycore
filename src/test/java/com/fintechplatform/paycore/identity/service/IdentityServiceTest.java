@@ -36,13 +36,6 @@ class IdentityServiceTest {
                 "+2348011111111"
         );
 
-        when(identityRepository
-                .existsByCustomerAndProvider(
-                        customer,
-                        IdentityProvider.PASSWORD
-                ))
-                .thenReturn(false);
-
         Identity identity =
                 Identity.createPasswordIdentity(
                         customer,
@@ -70,38 +63,6 @@ class IdentityServiceTest {
 
         verify(identityRepository)
                 .save(any(Identity.class));
-    }
-
-    @Test
-    void shouldRejectDuplicatePasswordIdentity() {
-
-        Customer customer = Customer.create(
-                "Esther",
-                "Agboniro",
-                "esther@example.com",
-                "+2348011111111"
-        );
-
-        when(identityRepository
-                .existsByCustomerAndProvider(
-                        customer,
-                        IdentityProvider.PASSWORD
-                ))
-                .thenReturn(true);
-
-        assertThatThrownBy(() ->
-                identityService.createPasswordIdentity(
-                        customer,
-                        "hashed-password"
-                )
-        )
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage(
-                        "Password identity already exists"
-                );
-
-        verify(identityRepository, never())
-                .save(any());
     }
 
     @Test

@@ -20,6 +20,6 @@ public class KycRegistrationListener {
 
     @EventListener
     public void onCustomerRegistered(CustomerRegisteredEvent event) {
-        kycService.createKyc(event.customerId());
+        kycService.createInitialProfile(event.customerId());
     }
 }

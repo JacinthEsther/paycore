@@ -19,13 +19,17 @@ import com.fintechplatform.paycore.identity.service.IdentityService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.hibernate.exception.ConstraintViolationException;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
+import java.sql.SQLException;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -58,13 +62,25 @@ class CustomerServiceTest {
     @Mock
     private ApplicationEventPublisher eventPublisher;
 
-    @InjectMocks
+    @Mock
+    private PlatformTransactionManager transactionManager;
+
     private CustomerService customerService;
 
     private RegisterCustomerRequest request;
 
     @BeforeEach
     void setUp() {
+        customerService = new CustomerService(
+                customerRepository,
+                passwordEncoder,
+                phoneNumberService,
+                identityService,
+                roleAssignmentService,
+                eventPublisher,
+                new TransactionTemplate(transactionManager)
+        );
+
         request = new RegisterCustomerRequest(
                 "Esther",
                 "Agboniro",
@@ -88,7 +104,7 @@ class CustomerServiceTest {
         when(passwordEncoder.encode("Password123!"))
                 .thenReturn("hashed-password");
 
-        when(customerRepository.save(any(Customer.class)))
+        when(customerRepository.saveAndFlush(any(Customer.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         customerService.register(request);
@@ -97,7 +113,7 @@ class CustomerServiceTest {
                 ArgumentCaptor.forClass(Customer.class);
 
         verify(customerRepository)
-                .save(captor.capture());
+                .saveAndFlush(captor.capture());
 
         // System-assigned, so no acting admin is recorded.
         verify(roleAssignmentService).assignRole(
@@ -117,7 +133,7 @@ class CustomerServiceTest {
         when(passwordEncoder.encode("Password123!"))
                 .thenReturn("hashed-password");
 
-        when(customerRepository.save(any(Customer.class)))
+        when(customerRepository.saveAndFlush(any(Customer.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         doThrow(new RoleNotFoundException(RoleName.CUSTOMER))
@@ -149,18 +165,10 @@ class CustomerServiceTest {
                 "NG"
         )).thenReturn("+2348012345678");
 
-        when(customerRepository.existsByEmail(
-                "esther@example.com"
-        )).thenReturn(false);
-
-        when(customerRepository.existsByPhoneNumber(
-                "+2348012345678"
-        )).thenReturn(false);
-
         when(passwordEncoder.encode(
                 "Password123!"
         )).thenReturn("hashed-password");
-        when(customerRepository.save(any(Customer.class)))
+        when(customerRepository.saveAndFlush(any(Customer.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         CustomerResponse response =
@@ -193,7 +201,7 @@ class CustomerServiceTest {
                 .encode("Password123!");
 
         verify(customerRepository)
-                .save(any(Customer.class));
+                .saveAndFlush(any(Customer.class));
 
         verify(identityService)
                 .createPasswordIdentity(
@@ -214,18 +222,10 @@ class CustomerServiceTest {
                 "NG"
         )).thenReturn("+2348012345678");
 
-        when(customerRepository.existsByEmail(
-                "esther@example.com"
-        )).thenReturn(false);
-
-        when(customerRepository.existsByPhoneNumber(
-                "+2348012345678"
-        )).thenReturn(false);
-
         when(passwordEncoder.encode(
                 "Password123!"
         )).thenReturn("hashed-password");
-        when(customerRepository.save(any(Customer.class)))
+        when(customerRepository.saveAndFlush(any(Customer.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         customerService.register(request);
@@ -234,7 +234,7 @@ class CustomerServiceTest {
                 ArgumentCaptor.forClass(Customer.class);
 
         verify(customerRepository)
-                .save(captor.capture());
+                .saveAndFlush(captor.capture());
 
         Customer savedCustomer = captor.getValue();
 
@@ -284,16 +284,10 @@ class CustomerServiceTest {
                 anyString()
         )).thenReturn("+2348012345678");
 
-        when(customerRepository.existsByEmail(anyString()))
-                .thenReturn(false);
-
-        when(customerRepository.existsByPhoneNumber(anyString()))
-                .thenReturn(false);
-
         when(passwordEncoder.encode("Password123!"))
                 .thenReturn("bcrypt-hash");
 
-        when(customerRepository.save(any(Customer.class)))
+        when(customerRepository.saveAndFlush(any(Customer.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         customerService.register(request);
@@ -323,9 +317,10 @@ class CustomerServiceTest {
     @Test
     void shouldRejectDuplicateEmail() {
 
-        when(customerRepository.existsByEmail(
-                "esther@example.com"
-        )).thenReturn(true);
+        givenRegistrationInputs();
+
+        when(customerRepository.saveAndFlush(any(Customer.class)))
+                .thenThrow(violationOf(CustomerService.EMAIL_CONSTRAINT));
 
         assertThatThrownBy(() ->
                 customerService.register(request)
@@ -333,37 +328,23 @@ class CustomerServiceTest {
                 .isInstanceOf(DuplicateCustomerException.class)
                 .hasMessage("Email is already registered");
 
-        verify(customerRepository)
-                .existsByEmail("esther@example.com");
-
-        verify(customerRepository, never())
-                .save(any(Customer.class));
-
-        verify(passwordEncoder, never())
-                .encode(anyString());
-
+        // The insert failed first, so nothing else was written.
         verify(identityService, never())
                 .createPasswordIdentity(
                         any(Customer.class),
                         anyString()
                 );
+
+        verify(transactionManager).rollback(any());
     }
 
     @Test
     void shouldRejectDuplicatePhoneNumber() {
 
-        when(phoneNumberService.normalize(
-                "08012345678",
-                "NG"
-        )).thenReturn("+2348012345678");
+        givenRegistrationInputs();
 
-        when(customerRepository.existsByEmail(
-                "esther@example.com"
-        )).thenReturn(false);
-
-        when(customerRepository.existsByPhoneNumber(
-                "+2348012345678"
-        )).thenReturn(true);
+        when(customerRepository.saveAndFlush(any(Customer.class)))
+                .thenThrow(violationOf(CustomerService.PHONE_CONSTRAINT));
 
         assertThatThrownBy(() ->
                 customerService.register(request)
@@ -371,12 +352,6 @@ class CustomerServiceTest {
                 .isInstanceOf(DuplicateCustomerException.class)
                 .hasMessage("Phone number is already registered");
 
-        verify(customerRepository, never())
-                .save(any(Customer.class));
-
-        verify(passwordEncoder, never())
-                .encode(anyString());
-
         verify(identityService, never())
                 .createPasswordIdentity(
                         any(Customer.class),
@@ -385,7 +360,43 @@ class CustomerServiceTest {
     }
 
     @Test
-    void shouldNormalizeEmailBeforeCheckingDuplicate() {
+    void shouldRethrowOtherIntegrityViolations() {
+
+        givenRegistrationInputs();
+
+        DataIntegrityViolationException other = violationOf("some_other_constraint");
+
+        when(customerRepository.saveAndFlush(any(Customer.class)))
+                .thenThrow(other);
+
+        assertThatThrownBy(() -> customerService.register(request))
+                .isSameAs(other);
+    }
+
+    @Test
+    void shouldHashPasswordBeforeOpeningTransaction() {
+
+        givenRegistrationInputs();
+
+        when(customerRepository.saveAndFlush(any(Customer.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        customerService.register(request);
+
+        // BCrypt is slow on purpose; no pooled connection may wait on it.
+        var order = inOrder(passwordEncoder, transactionManager, customerRepository);
+        order.verify(passwordEncoder).encode("Password123!");
+        order.verify(transactionManager).getTransaction(any());
+        order.verify(customerRepository).saveAndFlush(any(Customer.class));
+        order.verify(transactionManager).commit(any());
+
+        // Duplicates come from the unique constraints, not extra queries.
+        verify(customerRepository, never()).existsByEmail(anyString());
+        verify(customerRepository, never()).existsByPhoneNumber(anyString());
+    }
+
+    @Test
+    void shouldNormalizeEmailBeforeSaving() {
 
         RegisterCustomerRequest requestWithMessyEmail =
                 new RegisterCustomerRequest(
@@ -402,24 +413,24 @@ class CustomerServiceTest {
                 "NG"
         )).thenReturn("+2348012345678");
 
-        when(customerRepository.existsByEmail(
-                "esther@example.com"
-        )).thenReturn(false);
-
-        when(customerRepository.existsByPhoneNumber(
-                "+2348012345678"
-        )).thenReturn(false);
-
         when(passwordEncoder.encode(anyString()))
                 .thenReturn("hash");
 
-        when(customerRepository.save(any(Customer.class)))
+        when(customerRepository.saveAndFlush(any(Customer.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         customerService.register(requestWithMessyEmail);
 
+        ArgumentCaptor<Customer> captor =
+                ArgumentCaptor.forClass(Customer.class);
+
         verify(customerRepository)
-                .existsByEmail("esther@example.com");
+                .saveAndFlush(captor.capture());
+
+        // The unique constraint only catches duplicates if every email is
+        // stored in the same form.
+        assertThat(captor.getValue().getEmail())
+                .isEqualTo("esther@example.com");
     }
 
     @Test
@@ -440,16 +451,10 @@ class CustomerServiceTest {
                 "NG"
         )).thenReturn("+2348012345678");
 
-        when(customerRepository.existsByEmail(anyString()))
-                .thenReturn(false);
-
-        when(customerRepository.existsByPhoneNumber(anyString()))
-                .thenReturn(false);
-
         when(passwordEncoder.encode(anyString()))
                 .thenReturn("hash");
 
-        when(customerRepository.save(any(Customer.class)))
+        when(customerRepository.saveAndFlush(any(Customer.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         customerService.register(requestWithLowercaseCountry);
@@ -486,7 +491,7 @@ class CustomerServiceTest {
                 .existsByPhoneNumber(anyString());
 
         verify(customerRepository, never())
-                .save(any(Customer.class));
+                .saveAndFlush(any(Customer.class));
 
         verify(passwordEncoder, never())
                 .encode(anyString());
@@ -527,7 +532,7 @@ class CustomerServiceTest {
                 .hasMessage("Invalid phone number");
 
         verify(customerRepository, never())
-                .save(any(Customer.class));
+                .saveAndFlush(any(Customer.class));
     }
 
     @Test
@@ -548,18 +553,10 @@ class CustomerServiceTest {
                 "NG"
         )).thenReturn("+2348012345678");
 
-        when(customerRepository.existsByEmail(
-                "esther@example.com"
-        )).thenReturn(false);
-
-        when(customerRepository.existsByPhoneNumber(
-                "+2348012345678"
-        )).thenReturn(false);
-
         when(passwordEncoder.encode("Password123"))
                 .thenReturn("hashed-password");
 
-        when(customerRepository.save(any(Customer.class)))
+        when(customerRepository.saveAndFlush(any(Customer.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         CustomerResponse result =
@@ -579,6 +576,22 @@ class CustomerServiceTest {
                         any(Customer.class),
                         eq("hashed-password")
                 );
+    }
+
+    private void givenRegistrationInputs() {
+
+        when(phoneNumberService.normalize("08012345678", "NG"))
+                .thenReturn("+2348012345678");
+
+        when(passwordEncoder.encode("Password123!"))
+                .thenReturn("hashed-password");
+    }
+
+    private static DataIntegrityViolationException violationOf(String constraint) {
+        return new DataIntegrityViolationException(
+                "violation",
+                new ConstraintViolationException("violation", new SQLException(), constraint)
+        );
     }
 
     // ============================================================

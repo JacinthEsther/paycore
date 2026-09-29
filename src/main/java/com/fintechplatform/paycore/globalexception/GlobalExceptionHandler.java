@@ -1,5 +1,11 @@
 package com.fintechplatform.paycore.globalexception;
 
+import com.fintechplatform.paycore.account.exception.AccountAlreadyExistsException;
+import com.fintechplatform.paycore.account.exception.AccountNotFoundException;
+import com.fintechplatform.paycore.account.exception.AccountNumberUnavailableException;
+import com.fintechplatform.paycore.account.exception.InvalidAccountStateException;
+import com.fintechplatform.paycore.account.exception.KycVerificationRequiredException;
+import com.fintechplatform.paycore.account.exception.UnsupportedCurrencyException;
 import com.fintechplatform.paycore.authorization.exception.RoleAlreadyAssignedException;
 import com.fintechplatform.paycore.authorization.exception.RoleNotAssignedException;
 import com.fintechplatform.paycore.authorization.exception.RoleNotFoundException;
@@ -24,6 +30,7 @@ import com.fintechplatform.paycore.kyc.exception.KycProviderException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -398,5 +405,80 @@ public class GlobalExceptionHandler {
                 ));
     }
 
+    @ExceptionHandler(AccountNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleAccountNotFound(
+            AccountNotFoundException exception
+    ) {
+        return error(HttpStatus.NOT_FOUND, "ACCOUNT_NOT_FOUND", exception.getMessage());
+    }
 
+    @ExceptionHandler(AccountAlreadyExistsException.class)
+    public ResponseEntity<Map<String, Object>> handleAccountAlreadyExists(
+            AccountAlreadyExistsException exception
+    ) {
+        return error(HttpStatus.CONFLICT, "ACCOUNT_ALREADY_EXISTS", exception.getMessage());
+    }
+
+    @ExceptionHandler(InvalidAccountStateException.class)
+    public ResponseEntity<Map<String, Object>> handleInvalidAccountState(
+            InvalidAccountStateException exception
+    ) {
+        return error(HttpStatus.CONFLICT, "INVALID_ACCOUNT_STATE", exception.getMessage());
+    }
+
+    @ExceptionHandler(UnsupportedCurrencyException.class)
+    public ResponseEntity<Map<String, Object>> handleUnsupportedCurrency(
+            UnsupportedCurrencyException exception
+    ) {
+        return error(HttpStatus.BAD_REQUEST, "UNSUPPORTED_CURRENCY", exception.getMessage());
+    }
+
+    @ExceptionHandler(KycVerificationRequiredException.class)
+    public ResponseEntity<Map<String, Object>> handleKycVerificationRequired(
+            KycVerificationRequiredException exception
+    ) {
+        return error(HttpStatus.FORBIDDEN, "KYC_VERIFICATION_REQUIRED", exception.getMessage());
+    }
+
+    @ExceptionHandler(AccountNumberUnavailableException.class)
+    public ResponseEntity<Map<String, Object>> handleAccountNumberUnavailable(
+            AccountNumberUnavailableException exception
+    ) {
+        return error(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                "ACCOUNT_NUMBER_UNAVAILABLE",
+                "An account number could not be allocated; please try again"
+        );
+    }
+
+    /**
+     * Two requests changed the same record at once (optimistic locking).
+     * Nothing was saved from the losing request; the client can reload and
+     * retry.
+     */
+    @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
+    public ResponseEntity<Map<String, Object>> handleConcurrentModification(
+            ObjectOptimisticLockingFailureException exception
+    ) {
+        return error(
+                HttpStatus.CONFLICT,
+                "CONCURRENT_MODIFICATION",
+                "The record was changed by another request; reload and try again"
+        );
+    }
+
+    private ResponseEntity<Map<String, Object>> error(
+            HttpStatus status,
+            String error,
+            String message
+    ) {
+        return ResponseEntity
+                .status(status)
+                .body(Map.of(
+                        "timestamp", Instant.now(),
+                        "status", status.value(),
+                        "error", error,
+                        "message", message
+                ));
+    }
 }

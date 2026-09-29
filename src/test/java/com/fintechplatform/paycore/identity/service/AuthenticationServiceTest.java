@@ -24,6 +24,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.Optional;
@@ -66,6 +68,9 @@ class AuthenticationServiceTest {
     @Mock
     private RefreshTokenService refreshTokenService;
 
+    @Mock
+    private PlatformTransactionManager transactionManager;
+
     private AuthenticationService authenticationService;
 
     @BeforeEach
@@ -78,7 +83,8 @@ class AuthenticationServiceTest {
                         sessionTokenService,
                         passwordEncoder,
                         accessTokenService,
-                        refreshTokenService
+                        refreshTokenService,
+                        new TransactionTemplate(transactionManager)
                 );
     }
 
@@ -94,7 +100,7 @@ class AuthenticationServiceTest {
         UUID sessionId = UUID.randomUUID();
         when(session.getId()).thenReturn(sessionId);
 
-        when(customerRepository.findByEmail("esther@example.com"))
+        when(customerRepository.findWithAuthoritiesByEmail("esther@example.com"))
                 .thenReturn(Optional.of(customer));
 
         when(identityService.findPasswordIdentity(customer))
@@ -190,7 +196,7 @@ class AuthenticationServiceTest {
     @Test
     void shouldNormalizeEmailBeforeLookup() {
 
-        when(customerRepository.findByEmail("esther@example.com"))
+        when(customerRepository.findWithAuthoritiesByEmail("esther@example.com"))
                 .thenReturn(Optional.empty());
 
         assertThatThrownBy(() ->
@@ -205,13 +211,13 @@ class AuthenticationServiceTest {
                 .isInstanceOf(InvalidCredentialsException.class);
 
         verify(customerRepository)
-                .findByEmail("esther@example.com");
+                .findWithAuthoritiesByEmail("esther@example.com");
     }
 
     @Test
     void shouldRejectUnknownEmail() {
 
-        when(customerRepository.findByEmail("unknown@example.com"))
+        when(customerRepository.findWithAuthoritiesByEmail("unknown@example.com"))
                 .thenReturn(Optional.empty());
 
         assertThatThrownBy(() ->
@@ -236,7 +242,7 @@ class AuthenticationServiceTest {
 
         Customer customer = newCustomer();
 
-        when(customerRepository.findByEmail("esther@example.com"))
+        when(customerRepository.findWithAuthoritiesByEmail("esther@example.com"))
                 .thenReturn(Optional.of(customer));
 
         when(identityService.findPasswordIdentity(customer))
@@ -265,7 +271,7 @@ class AuthenticationServiceTest {
 
         Identity identity = mock(Identity.class);
 
-        when(customerRepository.findByEmail("esther@example.com"))
+        when(customerRepository.findWithAuthoritiesByEmail("esther@example.com"))
                 .thenReturn(Optional.of(customer));
 
         when(identityService.findPasswordIdentity(customer))
@@ -422,6 +428,49 @@ class AuthenticationServiceTest {
                 );
     }
 
+    @Test
+    void shouldCheckPasswordBeforeOpeningTransaction() {
+
+        Customer customer = newCustomer();
+        stubValidIdentity(customer, "Password123", true);
+
+        LoginSession session = mock(LoginSession.class);
+        when(session.getId()).thenReturn(UUID.randomUUID());
+        when(sessionTokenService.generate()).thenReturn("raw-token");
+        when(sessionTokenService.hash("raw-token")).thenReturn("token-hash");
+        when(loginSessionService.createSession(any(), any(), any(), any()))
+                .thenReturn(session);
+
+        authenticationService.login(
+                new LoginRequest("esther@example.com", "Password123"),
+                CONTEXT
+        );
+
+        // BCrypt is slow on purpose; no pooled connection may wait on it.
+        var order = inOrder(passwordEncoder, transactionManager, loginSessionService);
+        order.verify(passwordEncoder).matches(anyString(), anyString());
+        order.verify(transactionManager).getTransaction(any());
+        order.verify(loginSessionService).createSession(any(), any(), any(), any());
+        order.verify(transactionManager).commit(any());
+    }
+
+    @Test
+    void wrongPasswordShouldNeverOpenTransaction() {
+
+        Customer customer = newCustomer();
+        stubValidIdentity(customer, "wrong", false);
+
+        assertThatThrownBy(() ->
+                authenticationService.login(
+                        new LoginRequest("esther@example.com", "wrong"),
+                        CONTEXT
+                )
+        )
+                .isInstanceOf(InvalidCredentialsException.class);
+
+        verifyNoInteractions(transactionManager, loginSessionService);
+    }
+
     // ============================================================
     // REFRESH
     // ============================================================
@@ -438,6 +487,9 @@ class AuthenticationServiceTest {
         RefreshToken rotated = mock(RefreshToken.class);
         when(rotated.getCustomer()).thenReturn(customer);
         when(rotated.getSession()).thenReturn(session);
+
+        when(customerRepository.findWithAuthoritiesById(customer.getId()))
+                .thenReturn(Optional.of(customer));
 
         IssuedRefreshToken issued =
                 new IssuedRefreshToken("new-raw-refresh", rotated);
@@ -471,6 +523,9 @@ class AuthenticationServiceTest {
 
         RefreshToken rotated = mock(RefreshToken.class);
         when(rotated.getCustomer()).thenReturn(customer);
+
+        when(customerRepository.findWithAuthoritiesById(customer.getId()))
+                .thenReturn(Optional.of(customer));
 
         when(refreshTokenService.rotate("raw-refresh"))
                 .thenReturn(new IssuedRefreshToken("new", rotated));
@@ -584,7 +639,7 @@ class AuthenticationServiceTest {
 
         Identity identity = mock(Identity.class);
 
-        when(customerRepository.findByEmail("esther@example.com"))
+        when(customerRepository.findWithAuthoritiesByEmail("esther@example.com"))
                 .thenReturn(Optional.of(customer));
 
         when(identityService.findPasswordIdentity(customer))

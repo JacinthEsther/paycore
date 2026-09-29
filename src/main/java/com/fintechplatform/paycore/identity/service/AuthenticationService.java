@@ -20,6 +20,7 @@ import com.fintechplatform.paycore.security.AccessTokenService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.Locale;
 import java.util.UUID;
@@ -34,6 +35,7 @@ public class AuthenticationService {
     private final PasswordEncoder passwordEncoder;
     private final AccessTokenService accessTokenService;
     private final RefreshTokenService refreshTokenService;
+    private final TransactionTemplate transactionTemplate;
 
     public AuthenticationService(
             CustomerRepository customerRepository,
@@ -42,8 +44,10 @@ public class AuthenticationService {
             SessionTokenService sessionTokenService,
             PasswordEncoder passwordEncoder,
             AccessTokenService accessTokenService,
-            RefreshTokenService refreshTokenService
+            RefreshTokenService refreshTokenService,
+            TransactionTemplate transactionTemplate
     ) {
+        this.transactionTemplate = transactionTemplate;
         this.customerRepository = customerRepository;
         this.identityService = identityService;
         this.loginSessionService = loginSessionService;
@@ -53,7 +57,20 @@ public class AuthenticationService {
         this.refreshTokenService = refreshTokenService;
     }
 
-    @Transactional
+    /**
+     * Built for heavy login traffic:
+     *
+     * - The customer is read together with their roles and permissions in
+     *   one query, so issuing the access token needs no further reads.
+     * - The BCrypt check runs outside any transaction. It is deliberately
+     *   slow CPU work; inside a transaction it would keep a pooled
+     *   database connection idle for the whole comparison.
+     * - Only the writes (session and refresh token) run in a transaction,
+     *   and only once the password is known to be right.
+     *
+     * Not @Transactional: the transaction is opened explicitly after the
+     * password check.
+     */
     public LoginResult login(
             LoginRequest request,
             AuthenticationContext context
@@ -64,7 +81,7 @@ public class AuthenticationService {
 
         Customer customer =
                 customerRepository
-                        .findByEmail(email)
+                        .findWithAuthoritiesByEmail(email)
                         .orElseThrow(
                                 InvalidCredentialsException::new
                         );
@@ -94,6 +111,16 @@ public class AuthenticationService {
         }
 
         validateCustomerCanLogin(customer);
+
+        return transactionTemplate.execute(status ->
+                startSession(customer, context)
+        );
+    }
+
+    private LoginResult startSession(
+            Customer customer,
+            AuthenticationContext context
+    ) {
 
         String sessionToken =
                 sessionTokenService.generate();
@@ -130,8 +157,15 @@ public class AuthenticationService {
         IssuedRefreshToken refreshToken =
                 refreshTokenService.rotate(rawRefreshToken);
 
+        // Refresh runs every few minutes for every active user, so the
+        // customer, roles and permissions come back in one query rather
+        // than one per role.
         Customer customer =
-                refreshToken.refreshToken().getCustomer();
+                customerRepository
+                        .findWithAuthoritiesById(
+                                refreshToken.refreshToken().getCustomer().getId()
+                        )
+                        .orElseThrow(InvalidRefreshTokenException::new);
 
         if (!canLogin(customer)) {
             // Rolls back the rotation; the customer simply cannot refresh.

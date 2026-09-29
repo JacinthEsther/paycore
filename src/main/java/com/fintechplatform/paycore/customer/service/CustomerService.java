@@ -3,6 +3,7 @@ package com.fintechplatform.paycore.customer.service;
 import com.fintechplatform.paycore.authorization.entity.Role;
 import com.fintechplatform.paycore.authorization.entity.RoleName;
 import com.fintechplatform.paycore.authorization.service.RoleAssignmentService;
+import com.fintechplatform.paycore.common.persistence.ConstraintViolations;
 import com.fintechplatform.paycore.customer.dto.request.RegisterCustomerRequest;
 import com.fintechplatform.paycore.customer.dto.request.UpdateCustomerRequest;
 import com.fintechplatform.paycore.customer.dto.response.CustomerPageResponse;
@@ -18,17 +19,22 @@ import com.fintechplatform.paycore.customer.repository.CustomerRepository;
 import com.fintechplatform.paycore.identity.service.IdentityService;
 import com.fintechplatform.paycore.kyc.dto.PageInfo;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.UUID;
 
 @Service
 public class CustomerService {
+
+    static final String EMAIL_CONSTRAINT = "uk_customers_email";
+    static final String PHONE_CONSTRAINT = "uk_customers_phone";
 
     private final CustomerRepository customerRepository;
     private final PasswordEncoder passwordEncoder;
@@ -36,6 +42,7 @@ public class CustomerService {
     private final IdentityService identityService;
     private final RoleAssignmentService roleAssignmentService;
     private final ApplicationEventPublisher eventPublisher;
+    private final TransactionTemplate transactionTemplate;
 
 
     public CustomerService(
@@ -44,7 +51,8 @@ public class CustomerService {
             PhoneNumberService phoneNumberService,
             IdentityService identityService,
             RoleAssignmentService roleAssignmentService,
-            ApplicationEventPublisher eventPublisher
+            ApplicationEventPublisher eventPublisher,
+            TransactionTemplate transactionTemplate
     ) {
         this.customerRepository = customerRepository;
         this.passwordEncoder = passwordEncoder;
@@ -52,10 +60,27 @@ public class CustomerService {
         this.identityService = identityService;
         this.roleAssignmentService = roleAssignmentService;
         this.eventPublisher = eventPublisher;
+        this.transactionTemplate = transactionTemplate;
     }
 
 
-    @Transactional
+    /**
+     * Registers a customer. Built for heavy sign-up traffic:
+     *
+     * - The password is hashed first, outside any transaction. BCrypt is
+     *   deliberately slow CPU work, and inside a transaction it would keep
+     *   a pooled database connection idle for the whole hash, capping
+     *   registrations at pool size / hash time.
+     * - Duplicate email or phone is detected by the unique constraints, not
+     *   by "does it exist?" queries first: fewer round trips, and two
+     *   concurrent sign-ups with the same email get a clean 409 instead of
+     *   racing past the check.
+     * - Everything else (customer, role, identity, KYC profile) is written
+     *   in one short transaction.
+     *
+     * Not @Transactional: the transaction is opened explicitly after
+     * hashing.
+     */
     public CustomerResponse register(
             RegisterCustomerRequest request
     ) {
@@ -71,20 +96,35 @@ public class CustomerService {
                         countryCode
                 );
 
-        if (customerRepository.existsByEmail(email)) {
-            throw new DuplicateCustomerException(
-                    "Email is already registered"
-            );
-        }
-
-        if (customerRepository.existsByPhoneNumber(phoneNumber)) {
-            throw new DuplicateCustomerException(
-                    "Phone number is already registered"
-            );
-        }
-
         String passwordHash =
                 passwordEncoder.encode(request.password());
+
+        try {
+
+            return transactionTemplate.execute(status ->
+                    createCustomer(request, email, phoneNumber, passwordHash)
+            );
+
+        } catch (DataIntegrityViolationException exception) {
+
+            if (ConstraintViolations.violates(exception, EMAIL_CONSTRAINT)) {
+                throw new DuplicateCustomerException("Email is already registered");
+            }
+
+            if (ConstraintViolations.violates(exception, PHONE_CONSTRAINT)) {
+                throw new DuplicateCustomerException("Phone number is already registered");
+            }
+
+            throw exception;
+        }
+    }
+
+    private CustomerResponse createCustomer(
+            RegisterCustomerRequest request,
+            String email,
+            String phoneNumber,
+            String passwordHash
+    ) {
 
         Customer customer = Customer.create(
                 request.firstName().trim(),
@@ -93,8 +133,10 @@ public class CustomerService {
                 phoneNumber
         );
 
+        // Flush first so a duplicate email or phone fails here, before the
+        // role, identity and KYC rows are written.
         Customer savedCustomer =
-                customerRepository.save(customer);
+                customerRepository.saveAndFlush(customer);
 
         // Public registration always gets CUSTOMER; the client never
         // chooses a role. performedBy is null because the system assigns it.

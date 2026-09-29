@@ -68,7 +68,10 @@ class PermissionRepositoryIntegrationTest {
                         "KYC_READ",
                         "KYC_SUBMIT",
                         "ACCOUNT_READ",
-                        "TRANSACTION_CREATE"
+                        "TRANSACTION_CREATE",
+                        "ACCOUNT_OPEN",
+                        "ACCOUNT_VIEW_ALL",
+                        "ACCOUNT_MANAGE"
                 );
     }
 

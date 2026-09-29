@@ -90,6 +90,16 @@ public class KycService {
     // CUSTOMER
     // ============================================================
 
+    /**
+     * The NOT_STARTED profile of a customer who has just registered. No
+     * "already exists?" query: a brand-new customer cannot have one, and
+     * uk_kyc_profile_customer would reject a second anyway.
+     */
+    @Transactional
+    public void createInitialProfile(UUID customerId) {
+        kycProfileRepository.save(KycProfile.create(findCustomer(customerId)));
+    }
+
     @Transactional
     public KycResponse createKyc(UUID customerId) {
 

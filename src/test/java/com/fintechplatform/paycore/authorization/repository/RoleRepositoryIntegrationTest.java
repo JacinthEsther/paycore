@@ -85,7 +85,8 @@ class RoleRepositoryIntegrationTest {
                         "TRANSACTION_CREATE",
                         "KYC_READ",
                         "KYC_SUBMIT",
-                        "ACCOUNT_READ"
+                        "ACCOUNT_READ",
+                        "ACCOUNT_OPEN"
                 );
     }
 
@@ -95,7 +96,8 @@ class RoleRepositoryIntegrationTest {
         assertThat(permissionsOf(RoleName.SUPPORT))
                 .containsExactlyInAnyOrder(
                         "CUSTOMER_READ",
-                        "CUSTOMER_UPDATE"
+                        "CUSTOMER_UPDATE",
+                        "ACCOUNT_VIEW_ALL"
                 );
     }
 
@@ -109,7 +111,9 @@ class RoleRepositoryIntegrationTest {
                         "CUSTOMER_SUSPEND",
                         "CUSTOMER_CLOSE",
                         "KYC_REVIEW",
-                        "ROLE_MANAGE"
+                        "ROLE_MANAGE",
+                        "ACCOUNT_VIEW_ALL",
+                        "ACCOUNT_MANAGE"
                 );
     }
 
