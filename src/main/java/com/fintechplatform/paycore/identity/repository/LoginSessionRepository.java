@@ -1,0 +1,21 @@
+package com.fintechplatform.paycore.identity.repository;
+
+import com.fintechplatform.paycore.customer.entity.Customer;
+import com.fintechplatform.paycore.identity.entity.LoginSession;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+public interface LoginSessionRepository
+        extends JpaRepository<LoginSession, UUID> {
+
+    Optional<LoginSession> findBySessionTokenHash(
+            String sessionTokenHash
+    );
+
+    List<LoginSession> findByCustomerAndRevokedAtIsNull(
+            Customer customer
+    );
+}

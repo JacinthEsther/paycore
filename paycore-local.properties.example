@@ -1,0 +1,29 @@
+# Copy to paycore-local.properties (git-ignored) and fill in your own values.
+# Loaded by spring.config.import in application.properties when the app or
+# tests run from the project root. Real environment variables override it.
+# In production, set these as environment variables / from a secret manager
+# instead of using this file.
+
+# Required: password for the local PostgreSQL user (default user: postgres,
+# default URL: jdbc:postgresql://localhost:5432/paycore).
+PAYCORE_DB_PASSWORD=
+
+# Optional overrides
+#PAYCORE_DB_URL=jdbc:postgresql://localhost:5432/paycore
+#PAYCORE_DB_USERNAME=postgres
+
+# Optional locally (a development fallback is used); required in prod.
+# Generate with: openssl rand -base64 48
+#PAYCORE_JWT_SECRET=
+
+# Dojah sandbox credentials from https://app.dojah.io (Developers > Configuration).
+# Without them, BVN checks return 502 KYC_PROVIDER_UNAVAILABLE.
+DOJAH_APP_ID=
+DOJAH_SECRET_KEY=
+
+# Developer Preview demo mode (see paycore-ui/README.md). Seeds a shared
+# admin whose password is shown to every visitor of the demo UI.
+#PAYCORE_DEMO_ENABLED=true
+#PAYCORE_DEMO_ADMIN_PASSWORD=
+# Only needed when the UI runs on a different origin than the API.
+#PAYCORE_CORS_ALLOWED_ORIGINS=http://localhost:5173
