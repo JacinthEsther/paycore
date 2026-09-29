@@ -7,6 +7,7 @@ import com.fintechplatform.paycore.customer.dto.request.RegisterCustomerRequest;
 import com.fintechplatform.paycore.customer.dto.request.UpdateCustomerRequest;
 import com.fintechplatform.paycore.customer.dto.response.CustomerResponse;
 import com.fintechplatform.paycore.customer.entity.Customer;
+import com.fintechplatform.paycore.customer.event.CustomerAccessRevokedEvent;
 import com.fintechplatform.paycore.customer.event.CustomerRegisteredEvent;
 import com.fintechplatform.paycore.customer.enums.CustomerStatus;
 import com.fintechplatform.paycore.customer.exception.CustomerNotFoundException;
@@ -1204,6 +1205,9 @@ class CustomerServiceTest {
 
         verify(customerRepository)
                 .save(customer);
+
+        verify(eventPublisher)
+                .publishEvent(new CustomerAccessRevokedEvent(customerId));
     }
 
     @Test
@@ -1231,6 +1235,9 @@ class CustomerServiceTest {
 
         verify(customerRepository, never())
                 .save(any(Customer.class));
+
+        verify(eventPublisher, never())
+                .publishEvent(any(CustomerAccessRevokedEvent.class));
     }
 
     @Test
@@ -1467,6 +1474,9 @@ class CustomerServiceTest {
 
         verify(customerRepository)
                 .save(customer);
+
+        verify(eventPublisher)
+                .publishEvent(new CustomerAccessRevokedEvent(customerId));
     }
 
     @Test

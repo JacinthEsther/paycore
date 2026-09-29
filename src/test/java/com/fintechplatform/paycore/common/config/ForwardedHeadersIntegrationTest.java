@@ -151,13 +151,7 @@ class ForwardedHeadersIntegrationTest {
         HttpHeaders auth = new HttpHeaders();
         auth.setBearerAuth(accessToken);
 
-        assertThat(restTemplate.exchange(
-                "/api/v1/kyc",
-                org.springframework.http.HttpMethod.POST,
-                new HttpEntity<>(auth),
-                String.class
-        ).getStatusCode()).isEqualTo(HttpStatus.CREATED);
-
+        // The KYC profile was created at registration, so it only needs starting.
         assertThat(restTemplate.exchange(
                 "/api/v1/kyc/start",
                 org.springframework.http.HttpMethod.POST,

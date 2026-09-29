@@ -9,6 +9,7 @@ import com.fintechplatform.paycore.customer.dto.response.CustomerPageResponse;
 import com.fintechplatform.paycore.customer.dto.response.CustomerResponse;
 import com.fintechplatform.paycore.customer.dto.response.CustomerSummaryResponse;
 import com.fintechplatform.paycore.customer.entity.Customer;
+import com.fintechplatform.paycore.customer.event.CustomerAccessRevokedEvent;
 import com.fintechplatform.paycore.customer.event.CustomerRegisteredEvent;
 import com.fintechplatform.paycore.customer.exception.CustomerNotFoundException;
 import com.fintechplatform.paycore.customer.exception.DuplicateCustomerException;
@@ -304,9 +305,14 @@ public class CustomerService {
             );
         }
 
-        return toResponse(
-                customerRepository.save(customer)
+        Customer savedCustomer =
+                customerRepository.save(customer);
+
+        eventPublisher.publishEvent(
+                new CustomerAccessRevokedEvent(customerId)
         );
+
+        return toResponse(savedCustomer);
     }
 
     @Transactional
@@ -352,6 +358,10 @@ public class CustomerService {
         }
 
         customerRepository.save(customer);
+
+        eventPublisher.publishEvent(
+                new CustomerAccessRevokedEvent(customerId)
+        );
     }
 
 

@@ -7,6 +7,7 @@ import com.fintechplatform.paycore.customer.enums.CustomerStatus;
 import com.fintechplatform.paycore.customer.exception.CustomerNotFoundException;
 import com.fintechplatform.paycore.customer.exception.DuplicateCustomerException;
 import com.fintechplatform.paycore.customer.service.CustomerService;
+import com.fintechplatform.paycore.identity.repository.LoginSessionRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -35,6 +36,10 @@ class CustomerControllerTest {
 
     @MockitoBean
     private CustomerService customerService;
+
+    // Needed by CurrentUserJwtAuthenticationConverter, which this slice loads.
+    @MockitoBean
+    private LoginSessionRepository loginSessionRepository;
 
     @Test
     void shouldReturnCustomerProfile() throws Exception {

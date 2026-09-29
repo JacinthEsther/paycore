@@ -5,8 +5,14 @@ import com.fintechplatform.paycore.authorization.entity.Role;
 import com.fintechplatform.paycore.authorization.entity.RoleName;
 import com.fintechplatform.paycore.authorization.service.AuthorizationService;
 import com.fintechplatform.paycore.customer.entity.Customer;
+import com.fintechplatform.paycore.customer.enums.CustomerStatus;
+import com.fintechplatform.paycore.identity.dto.SessionAccess;
+import com.fintechplatform.paycore.identity.repository.LoginSessionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.springframework.security.oauth2.server.resource.InvalidBearerTokenException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
@@ -21,10 +27,13 @@ import org.springframework.test.util.ReflectionTestUtils;
 import javax.crypto.SecretKey;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class AccessTokenServiceTest {
 
@@ -33,6 +42,14 @@ class AccessTokenServiceTest {
 
     private final JwtConfiguration jwtConfiguration =
             new JwtConfiguration(new MockEnvironment());
+
+    private final LoginSessionRepository loginSessionRepository =
+            mock(LoginSessionRepository.class);
+
+    private final CurrentUserJwtAuthenticationConverter converter =
+            new CurrentUserJwtAuthenticationConverter(loginSessionRepository);
+
+    private final UUID sessionId = UUID.randomUUID();
 
     private AccessTokenService accessTokenService;
     private JwtDecoder jwtDecoder;
@@ -75,12 +92,15 @@ class AccessTokenServiceTest {
     @Test
     void shouldIssueShortLivedTokenWithAuthorizationClaimsOnly() {
 
-        AccessToken token = accessTokenService.issue(customer);
+        AccessToken token = accessTokenService.issue(customer, sessionId);
 
         Jwt jwt = jwtDecoder.decode(token.value());
 
         assertThat(jwt.getSubject())
                 .isEqualTo(customerId.toString());
+
+        assertThat(jwt.getClaimAsString("sid"))
+                .isEqualTo(sessionId.toString());
 
         assertThat(jwt.getClaimAsStringList("roles"))
                 .containsExactly("CUSTOMER");
@@ -100,7 +120,7 @@ class AccessTokenServiceTest {
 
         assertThat(jwt.getClaims().keySet())
                 .containsExactlyInAnyOrder(
-                        "sub", "roles", "permissions", "iat", "exp"
+                        "sub", "sid", "roles", "permissions", "iat", "exp"
                 );
 
         assertThat(token.value())
@@ -111,12 +131,13 @@ class AccessTokenServiceTest {
     @Test
     void shouldConvertTokenIntoCurrentUserWithAuthorities() {
 
-        Jwt jwt = jwtDecoder.decode(
-                accessTokenService.issue(customer).value()
-        );
+        Jwt jwt = issuedJwt();
 
-        Authentication authentication =
-                new CurrentUserJwtAuthenticationConverter().convert(jwt);
+        givenSession(new SessionAccess(
+                customerId, CustomerStatus.ACTIVE, inOneHour(), null
+        ));
+
+        Authentication authentication = converter.convert(jwt);
 
         assertThat(authentication.getPrincipal())
                 .isEqualTo(new CurrentUser(customerId));
@@ -124,6 +145,104 @@ class AccessTokenServiceTest {
         assertThat(authentication.getAuthorities())
                 .extracting(GrantedAuthority::getAuthority)
                 .containsExactlyInAnyOrder("ROLE_CUSTOMER", "PROFILE_READ");
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = CustomerStatus.class, names = {"SUSPENDED", "CLOSED"})
+    void shouldRejectValidTokenOfCustomerWhoCannotAuthenticate(
+            CustomerStatus status
+    ) {
+
+        Jwt jwt = issuedJwt();
+
+        givenSession(new SessionAccess(
+                customerId, status, inOneHour(), null
+        ));
+
+        assertThatThrownBy(() -> converter.convert(jwt))
+                .isInstanceOf(InvalidBearerTokenException.class);
+    }
+
+    @Test
+    void shouldRejectValidTokenOfRevokedSession() {
+
+        Jwt jwt = issuedJwt();
+
+        givenSession(new SessionAccess(
+                customerId, CustomerStatus.ACTIVE, inOneHour(), Instant.now()
+        ));
+
+        assertThatThrownBy(() -> converter.convert(jwt))
+                .isInstanceOf(InvalidBearerTokenException.class);
+    }
+
+    @Test
+    void shouldRejectValidTokenOfExpiredSession() {
+
+        Jwt jwt = issuedJwt();
+
+        givenSession(new SessionAccess(
+                customerId,
+                CustomerStatus.ACTIVE,
+                Instant.now().minusSeconds(1),
+                null
+        ));
+
+        assertThatThrownBy(() -> converter.convert(jwt))
+                .isInstanceOf(InvalidBearerTokenException.class);
+    }
+
+    @Test
+    void shouldRejectValidTokenNamingAnotherCustomersSession() {
+
+        Jwt jwt = issuedJwt();
+
+        givenSession(new SessionAccess(
+                UUID.randomUUID(), CustomerStatus.ACTIVE, inOneHour(), null
+        ));
+
+        assertThatThrownBy(() -> converter.convert(jwt))
+                .isInstanceOf(InvalidBearerTokenException.class);
+    }
+
+    @Test
+    void shouldRejectValidTokenOfUnknownSession() {
+
+        Jwt jwt = issuedJwt();
+
+        when(loginSessionRepository.findAccessById(sessionId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> converter.convert(jwt))
+                .isInstanceOf(InvalidBearerTokenException.class);
+    }
+
+    @Test
+    void shouldRejectValidTokenWithoutSession() {
+
+        Jwt jwt = Jwt.withTokenValue("token")
+                .header("alg", "HS256")
+                .subject(customerId.toString())
+                .build();
+
+        assertThatThrownBy(() -> converter.convert(jwt))
+                .isInstanceOf(InvalidBearerTokenException.class)
+                .hasMessage("Access token has no session");
+    }
+
+    private Jwt issuedJwt() {
+        return jwtDecoder.decode(
+                accessTokenService.issue(customer, sessionId).value()
+        );
+    }
+
+    private void givenSession(SessionAccess access) {
+        when(loginSessionRepository.findAccessById(sessionId))
+                .thenReturn(Optional.of(access));
+    }
+
+    private static Instant inOneHour() {
+        return Instant.now().plus(Duration.ofHours(1));
     }
 
     @Test
@@ -137,7 +256,7 @@ class AccessTokenServiceTest {
                         jwtConfiguration.jwtSigningKey(other)
                 );
 
-        String token = accessTokenService.issue(customer).value();
+        String token = accessTokenService.issue(customer, sessionId).value();
 
         assertThatThrownBy(() -> otherDecoder.decode(token))
                 .isInstanceOf(

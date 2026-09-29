@@ -91,6 +91,9 @@ class AuthenticationServiceTest {
 
         LoginSession session = mock(LoginSession.class);
 
+        UUID sessionId = UUID.randomUUID();
+        when(session.getId()).thenReturn(sessionId);
+
         when(customerRepository.findByEmail("esther@example.com"))
                 .thenReturn(Optional.of(customer));
 
@@ -130,7 +133,7 @@ class AuthenticationServiceTest {
                         mock(RefreshToken.class)
                 );
 
-        when(accessTokenService.issue(customer))
+        when(accessTokenService.issue(customer, sessionId))
                 .thenReturn(accessToken);
 
         when(refreshTokenService.issue(customer, session))
@@ -428,8 +431,13 @@ class AuthenticationServiceTest {
 
         Customer customer = newCustomer();
 
+        UUID sessionId = UUID.randomUUID();
+        LoginSession session = mock(LoginSession.class);
+        when(session.getId()).thenReturn(sessionId);
+
         RefreshToken rotated = mock(RefreshToken.class);
         when(rotated.getCustomer()).thenReturn(customer);
+        when(rotated.getSession()).thenReturn(session);
 
         IssuedRefreshToken issued =
                 new IssuedRefreshToken("new-raw-refresh", rotated);
@@ -440,7 +448,7 @@ class AuthenticationServiceTest {
         when(refreshTokenService.rotate("old-raw-refresh"))
                 .thenReturn(issued);
 
-        when(accessTokenService.issue(customer))
+        when(accessTokenService.issue(customer, sessionId))
                 .thenReturn(accessToken);
 
         RefreshResult result =

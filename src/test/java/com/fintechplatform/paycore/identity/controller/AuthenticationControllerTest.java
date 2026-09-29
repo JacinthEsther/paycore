@@ -18,6 +18,7 @@ import com.fintechplatform.paycore.identity.exception.RefreshTokenReuseException
 import com.fintechplatform.paycore.identity.service.AuthenticationService;
 import com.fintechplatform.paycore.security.AccessToken;
 import com.fintechplatform.paycore.security.CurrentUser;
+import com.fintechplatform.paycore.identity.repository.LoginSessionRepository;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -58,6 +59,10 @@ class AuthenticationControllerTest {
 
     @MockitoBean
     private AuthenticationService authenticationService;
+
+    // Needed by CurrentUserJwtAuthenticationConverter, which this slice loads.
+    @MockitoBean
+    private LoginSessionRepository loginSessionRepository;
 
     @Test
     void shouldLoginSuccessfully() throws Exception {

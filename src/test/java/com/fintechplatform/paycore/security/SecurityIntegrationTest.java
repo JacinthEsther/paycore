@@ -20,6 +20,7 @@ import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -31,6 +32,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -266,14 +269,17 @@ class SecurityIntegrationTest {
     void shouldRejectExpiredAccessToken() throws Exception {
 
         String customerId = register("expired@example.com", "08011111123");
+        String sessionId = JsonPath.read(loginResponse("expired@example.com"), "$.sessionId");
 
         Instant now = Instant.now();
 
-        // Signed with the real key, so expiry is the only thing wrong.
-        // Ten minutes is well past the decoder's 60 second clock skew.
+        // Signed with the real key for a live session, so expiry is the only
+        // thing wrong. Ten minutes is well past the decoder's 60 second
+        // clock skew.
         String expired =
                 signedAccessToken(
                         customerId,
+                        sessionId,
                         now.minus(Duration.ofMinutes(30)),
                         now.minus(Duration.ofMinutes(10))
                 );
@@ -281,6 +287,7 @@ class SecurityIntegrationTest {
         String valid =
                 signedAccessToken(
                         customerId,
+                        sessionId,
                         now,
                         now.plus(Duration.ofMinutes(10))
                 );
@@ -310,12 +317,178 @@ class SecurityIntegrationTest {
 
         register("all@example.com", "08011111118");
         String accessToken = login("all@example.com");
+        String otherDeviceToken = login("all@example.com");
 
         mockMvc.perform(
                         post("/api/v1/auth/logout-all")
                                 .header("Authorization", "Bearer " + accessToken)
                 )
                 .andExpect(status().isNoContent());
+
+        // Every session's access token stops working at once.
+        getOwnProfile(accessToken).andExpect(status().isUnauthorized());
+        getOwnProfile(otherDeviceToken).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void loggingOutShouldEndOnlyThatSessionsAccessToken() throws Exception {
+
+        register("logout@example.com", "08011111130");
+
+        String loginResponse = loginResponse("logout@example.com");
+        String accessToken = JsonPath.read(loginResponse, "$.accessToken");
+        String sessionToken = JsonPath.read(loginResponse, "$.sessionToken");
+
+        String otherDeviceToken = login("logout@example.com");
+
+        mockMvc.perform(
+                        post("/api/v1/auth/logout")
+                                .header("X-Session-Token", sessionToken)
+                )
+                .andExpect(status().isNoContent());
+
+        getOwnProfile(accessToken).andExpect(status().isUnauthorized());
+        getOwnProfile(otherDeviceToken).andExpect(status().isOk());
+    }
+
+    @Test
+    void shouldRejectSignedTokenWithoutSession() throws Exception {
+
+        String customerId = register("nosession@example.com", "08011111131");
+
+        Instant now = Instant.now();
+
+        String withoutSession =
+                signedAccessToken(
+                        customerId,
+                        null,
+                        now,
+                        now.plus(Duration.ofMinutes(10))
+                );
+
+        getOwnProfile(withoutSession).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void suspendedCustomerShouldLoseAccessWithTheirExistingSession() throws Exception {
+
+        String customerId = registerActive("suspend-me@example.com", "08011111124");
+        String adminToken = loginAsNewAdmin("suspender@example.com", "08011111125");
+
+        String loginResponse = loginResponse("suspend-me@example.com");
+        String accessToken = JsonPath.read(loginResponse, "$.accessToken");
+        String refreshToken = JsonPath.read(loginResponse, "$.refreshToken");
+
+        getOwnProfile(accessToken).andExpect(status().isOk());
+
+        mockMvc.perform(
+                        post("/api/v1/customers/{id}/suspend", customerId)
+                                .header("Authorization", "Bearer " + adminToken)
+                )
+                .andExpect(status().isOk());
+
+        // The access token is still signed and unexpired, but no longer works.
+        getOwnProfile(accessToken).andExpect(status().isUnauthorized());
+
+        refresh(refreshToken).andExpect(status().isUnauthorized());
+
+        assertThat(activeSessionCount(customerId)).isZero();
+    }
+
+    @Test
+    void reactivatedCustomerShouldHaveToSignInAgain() throws Exception {
+
+        String customerId = registerActive("comeback@example.com", "08011111126");
+        String adminToken = loginAsNewAdmin("reactivator@example.com", "08011111127");
+
+        String refreshToken =
+                JsonPath.read(loginResponse("comeback@example.com"), "$.refreshToken");
+
+        mockMvc.perform(
+                        post("/api/v1/customers/{id}/suspend", customerId)
+                                .header("Authorization", "Bearer " + adminToken)
+                )
+                .andExpect(status().isOk());
+
+        mockMvc.perform(
+                        post("/api/v1/customers/{id}/reactivate", customerId)
+                                .header("Authorization", "Bearer " + adminToken)
+                )
+                .andExpect(status().isOk());
+
+        // Sessions ended at suspension stay ended after reactivation.
+        refresh(refreshToken).andExpect(status().isUnauthorized());
+
+        getOwnProfile(login("comeback@example.com")).andExpect(status().isOk());
+    }
+
+    @Test
+    void closedCustomerShouldLoseAccessWithTheirExistingSession() throws Exception {
+
+        String customerId = registerActive("close-me@example.com", "08011111128");
+        String adminToken = loginAsNewAdmin("closer@example.com", "08011111129");
+
+        String accessToken = login("close-me@example.com");
+
+        mockMvc.perform(
+                        delete("/api/v1/customers/{id}", customerId)
+                                .header("Authorization", "Bearer " + adminToken)
+                )
+                .andExpect(status().is2xxSuccessful());
+
+        getOwnProfile(accessToken).andExpect(status().isUnauthorized());
+
+        assertThat(activeSessionCount(customerId)).isZero();
+    }
+
+    private String registerActive(String email, String phone) throws Exception {
+
+        String customerId = register(email, phone);
+
+        jdbcTemplate.update(
+                "UPDATE customers SET status = 'ACTIVE' WHERE id = ?",
+                UUID.fromString(customerId)
+        );
+
+        return customerId;
+    }
+
+    private String loginAsNewAdmin(String email, String phone) throws Exception {
+
+        String adminId = register(email, phone);
+
+        grantRole(UUID.fromString(adminId), RoleName.ADMIN);
+
+        return login(email);
+    }
+
+    private ResultActions getOwnProfile(String accessToken) throws Exception {
+
+        return mockMvc.perform(
+                get("/api/v1/customers/me")
+                        .header("Authorization", "Bearer " + accessToken)
+        );
+    }
+
+    private ResultActions refresh(String refreshToken) throws Exception {
+
+        return mockMvc.perform(
+                post("/api/v1/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "refreshToken": "%s" }
+                                """.formatted(refreshToken))
+        );
+    }
+
+    private Integer activeSessionCount(String customerId) {
+
+        return jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM login_sessions"
+                        + " WHERE customer_id = ? AND revoked_at IS NULL",
+                Integer.class,
+                UUID.fromString(customerId)
+        );
     }
 
     private void grantRole(UUID customerId, String roleName) {
@@ -334,11 +507,12 @@ class SecurityIntegrationTest {
 
     private String signedAccessToken(
             String customerId,
+            String sessionId,
             Instant issuedAt,
             Instant expiresAt
     ) {
 
-        JwtClaimsSet claims =
+        JwtClaimsSet.Builder builder =
                 JwtClaimsSet.builder()
                         .subject(customerId)
                         .claim(
@@ -346,8 +520,13 @@ class SecurityIntegrationTest {
                                 List.of("PROFILE_READ")
                         )
                         .issuedAt(issuedAt)
-                        .expiresAt(expiresAt)
-                        .build();
+                        .expiresAt(expiresAt);
+
+        if (sessionId != null) {
+            builder.claim(AccessTokenService.SESSION_CLAIM, sessionId);
+        }
+
+        JwtClaimsSet claims = builder.build();
 
         return jwtEncoder
                 .encode(JwtEncoderParameters.from(
@@ -395,7 +574,12 @@ class SecurityIntegrationTest {
 
     private String login(String email) throws Exception {
 
-        String response =
+        return JsonPath.read(loginResponse(email), "$.accessToken");
+    }
+
+    private String loginResponse(String email) throws Exception {
+
+        return
                 mockMvc.perform(
                                 post("/api/v1/auth/login")
                                         .contentType(MediaType.APPLICATION_JSON)
@@ -410,7 +594,5 @@ class SecurityIntegrationTest {
                         .andReturn()
                         .getResponse()
                         .getContentAsString();
-
-        return JsonPath.read(response, "$.accessToken");
     }
 }

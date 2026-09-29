@@ -21,6 +21,7 @@ import com.fintechplatform.paycore.kyc.exception.InvalidKycDocumentException;
 import com.fintechplatform.paycore.kyc.service.KycDocumentService;
 import com.fintechplatform.paycore.kyc.service.KycService;
 import com.fintechplatform.paycore.security.CurrentUser;
+import com.fintechplatform.paycore.identity.repository.LoginSessionRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -60,6 +61,10 @@ class KycControllerTest {
 
     @MockitoBean
     private KycService kycService;
+
+    // Needed by CurrentUserJwtAuthenticationConverter, which this slice loads.
+    @MockitoBean
+    private LoginSessionRepository loginSessionRepository;
 
     @MockitoBean
     private KycDocumentService kycDocumentService;

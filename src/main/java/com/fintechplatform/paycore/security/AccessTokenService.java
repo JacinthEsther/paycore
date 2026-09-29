@@ -11,17 +11,24 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Issues short-lived access tokens. Claims are limited to what
- * authorization needs: subject, roles, permissions, iat and exp.
- * Never add profile, contact, financial or KYC data here.
+ * authorization needs: subject, login session id, roles, permissions, iat
+ * and exp. Never add profile, contact, financial or KYC data here.
  */
 @Service
 public class AccessTokenService {
 
     public static final String ROLES_CLAIM = "roles";
     public static final String PERMISSIONS_CLAIM = "permissions";
+
+    /**
+     * The login session the token belongs to, so logging out, suspension
+     * and closure end the token at once instead of when it expires.
+     */
+    public static final String SESSION_CLAIM = "sid";
 
     private final JwtEncoder jwtEncoder;
     private final JwtProperties jwtProperties;
@@ -37,7 +44,7 @@ public class AccessTokenService {
         this.authorizationService = authorizationService;
     }
 
-    public AccessToken issue(Customer customer) {
+    public AccessToken issue(Customer customer, UUID sessionId) {
 
         Instant issuedAt = Instant.now();
 
@@ -49,6 +56,7 @@ public class AccessTokenService {
         JwtClaimsSet claims =
                 JwtClaimsSet.builder()
                         .subject(customer.getId().toString())
+                        .claim(SESSION_CLAIM, sessionId.toString())
                         .claim(
                                 ROLES_CLAIM,
                                 List.copyOf(

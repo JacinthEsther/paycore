@@ -1,7 +1,6 @@
 package com.fintechplatform.paycore.identity.service;
 
 import com.fintechplatform.paycore.customer.entity.Customer;
-import com.fintechplatform.paycore.customer.enums.CustomerStatus;
 import com.fintechplatform.paycore.customer.exception.CustomerNotFoundException;
 import com.fintechplatform.paycore.customer.repository.CustomerRepository;
 import com.fintechplatform.paycore.identity.dto.AuthenticationContext;
@@ -111,7 +110,7 @@ public class AuthenticationService {
                 );
 
         AccessToken accessToken =
-                accessTokenService.issue(customer);
+                accessTokenService.issue(customer, session.getId());
 
         IssuedRefreshToken refreshToken =
                 refreshTokenService.issue(customer, session);
@@ -140,7 +139,10 @@ public class AuthenticationService {
         }
 
         return new RefreshResult(
-                accessTokenService.issue(customer),
+                accessTokenService.issue(
+                        customer,
+                        refreshToken.refreshToken().getSession().getId()
+                ),
                 refreshToken
         );
     }
@@ -196,8 +198,7 @@ public class AuthenticationService {
 
     private boolean canLogin(Customer customer) {
 
-        return customer.getStatus() != CustomerStatus.SUSPENDED
-                && customer.getStatus() != CustomerStatus.CLOSED;
+        return customer.getStatus().canAuthenticate();
     }
 
     private String normalizeEmail(String email) {
