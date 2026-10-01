@@ -2,8 +2,11 @@
 
 PayCore is the backend for a Nigerian financial platform. It covers the parts every
 fintech needs before money can move: customer onboarding, secure sign-in,
-role-based access control, KYC (Know Your Customer) identity verification and
-customer accounts, the foundation for the ledger and transactions to come.
+role-based access control, KYC (Know Your Customer) identity verification,
+customer accounts, a double-entry ledger, money in and out through payment
+rails (card top-ups, transfers to and from other banks), and maker-checker
+corrections. Nobody, staff included, can put money into an account by typing
+an amount.
 
 The repository also contains **paycore-ui**, a small React app that lets you
 click through the API and see each request and response as it happens.
@@ -37,9 +40,35 @@ click through the API and see each request and response as it happens.
   - Admins activate, freeze, unfreeze and close accounts with a required
     reason; every change goes into an append-only audit history, and admins
     cannot act on their own accounts
-  - No balance on the account: balances will come from the ledger
-- **Demo mode:** seeds a shared admin account so visitors can try the admin
-  review flow in the Developer Preview.
+  - No balance column on the account: balances are derived from the ledger
+- **Ledger:**
+  - Double-entry: every transaction is a debit and an equal credit, entries
+    are never edited, and balances are credits minus debits
+  - Customer transfers by account number, with idempotency keys and row
+    locks so the same money can never be spent twice
+  - Every customer balance is matched by PayCore's per-currency settlement
+    account (the money it holds at its bank)
+  - Reversals: a new transaction undoes the original, which is kept and
+    marked `REVERSED`; nothing is reversed twice
+  - Staff notes are internal and kept apart from the descriptions
+    customers see
+- **Money in and out:**
+  - Inbound transfers from other banks through a bank-rail webhook signed
+    with HMAC-SHA256, idempotent by NIP-style session id
+  - Outbound transfers to other banks with name enquiry; a payment the rail
+    rejects is reversed automatically
+  - Card top-ups, credited only once the processor confirms the payment
+  - Simulated rail ("Test Bank") and card processor behind the same
+    interfaces a real provider would implement
+- **Operations (maker-checker):** reversals and manual adjustments are
+  requested by one operations officer and posted only when a different one
+  approves; the database enforces the four-eyes rule too. Admins manage
+  customers and compliance but cannot move money.
+  - Statements with opening, closing and running balances per calendar day
+    in Lagos time
+- **API docs:** Swagger UI at `/swagger-ui.html`.
+- **Demo mode:** seeds a shared admin and two operations officers so
+  visitors can try compliance and maker-checker in the Developer Preview.
 
 ## Tech stack
 

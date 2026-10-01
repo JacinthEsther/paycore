@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, errorMessage } from '../../api/client';
 import type { BvnAttempts, KycReviewItem, KycReviewQueue, KycStatus } from '../../api/types';
-import { Card, formatDate, humanize, Notice, PageHeader, StatusBadge } from '../../components/ui';
+import { ScreenTitle } from '../../components/Layout';
+import { Card, formatDate, humanize, Notice, StatusBadge } from '../../components/ui';
 import { markDone, useJourney } from '../../journey';
 import { FinishCard } from './FinishCard';
 
@@ -32,11 +33,11 @@ export function ReviewQueue() {
 
   return (
     <>
-      <PageHeader eyebrow="Phase 2 · Admin" title="KYC review queue">
+      <ScreenTitle title="KYC reviews">
         These endpoints need the <code>KYC_REVIEW</code> permission, which is exactly why your customer token got{' '}
         <code>403</code>. The workflow runs <code>SUBMITTED → UNDER_REVIEW →</code> approve, reject or request more
         information. Every decision records who made it and why.
-      </PageHeader>
+      </ScreenTitle>
 
       {mine && (mine.status === 'SUBMITTED' || mine.status === 'UNDER_REVIEW') && (
         <Notice tone="info" title="Your application is here.">

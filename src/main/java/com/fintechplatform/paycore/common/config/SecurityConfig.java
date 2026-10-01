@@ -116,6 +116,16 @@ public class SecurityConfig {
                         .requestMatchers("/error")
                         .permitAll()
 
+                        // API description and Swagger UI. Turn them off
+                        // with springdoc.api-docs.enabled=false and
+                        // springdoc.swagger-ui.enabled=false.
+                        .requestMatchers(
+                                "/v3/api-docs/**",
+                                "/swagger-ui.html",
+                                "/swagger-ui/**"
+                        )
+                        .permitAll()
+
                         // Only exists in demo mode (paycore.demo.enabled).
                         .requestMatchers(
                                 HttpMethod.GET,
@@ -126,6 +136,14 @@ public class SecurityConfig {
                         .requestMatchers(
                                 HttpMethod.POST,
                                 "/api/v1/customers"
+                        )
+                        .permitAll()
+
+                        // The bank rail authenticates with an HMAC signature
+                        // over the body, checked by InboundWebhookService.
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/v1/webhooks/bank-rail/inbound"
                         )
                         .permitAll()
 

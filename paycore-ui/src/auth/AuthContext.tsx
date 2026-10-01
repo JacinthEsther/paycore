@@ -16,10 +16,18 @@ interface AuthState {
   claims: AccessClaims | null;
   profile: Customer | null;
   isAdmin: boolean;
+  /** ADMIN, OPERATIONS or SUPPORT: uses the back office. */
+  isStaff: boolean;
+  /** Has the CUSTOMER role: uses the banking app. */
+  isCustomer: boolean;
+  /** Whether the access token carries the permission. */
+  can: (permission: string) => boolean;
   login: (email: string, password: string) => Promise<LoginResponse>;
   logout: (redirectTo?: string) => Promise<void>;
   reloadProfile: () => Promise<void>;
 }
+
+const STAFF_ROLES = ['ADMIN', 'OPERATIONS', 'SUPPORT'];
 
 const AuthContext = createContext<AuthState | null>(null);
 
@@ -94,6 +102,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       claims,
       profile,
       isAdmin: claims?.roles.includes('ADMIN') ?? false,
+      isStaff: claims?.roles.some((role) => STAFF_ROLES.includes(role)) ?? false,
+      isCustomer: claims?.roles.includes('CUSTOMER') ?? false,
+      can: (permission: string) => claims?.permissions.includes(permission) ?? false,
       login,
       logout,
       reloadProfile,

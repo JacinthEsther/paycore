@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, errorMessage } from '../api/client';
 import type { Customer } from '../api/types';
-import { Card, Field, Notice, PageHeader } from '../components/ui';
+import { Field, Notice } from '../components/ui';
 import { markDone, rememberCustomer } from '../journey';
 
 const COUNTRIES = [
@@ -47,13 +47,10 @@ export function Register() {
   }
 
   return (
-    <div className="narrow">
-      <PageHeader eyebrow="Step 1 · Customer" title="Create your PayCore account">
-        This calls <code>POST /api/v1/customers</code>. It's the only customer endpoint open without a token. The
-        server gives you the <code>CUSTOMER</code> role; the request has no way to choose a role.
-      </PageHeader>
-
-      <Card>
+    <div className="auth-page">
+      <section className="auth-card">
+        <h1>Open a PayCore account</h1>
+        <p className="muted">Start with your profile. You verify your identity and open your naira account next.</p>
         <form onSubmit={submit} className="form">
           <div className="row-2">
             <Field label="First name">
@@ -63,7 +60,7 @@ export function Register() {
               <input required maxLength={100} value={form.lastName} onChange={set('lastName')} autoComplete="family-name" />
             </Field>
           </div>
-          <Field label="Email" hint="Any address works; nothing is sent to it.">
+          <Field label="Email" hint="Any address works. Verification emails go to the demo inbox.">
             <input required type="email" value={form.email} onChange={set('email')} autoComplete="email" />
           </Field>
           <div className="row-phone">
@@ -87,13 +84,13 @@ export function Register() {
           {error && <Notice tone="bad">{error}</Notice>}
 
           <button className="btn btn-primary btn-block" disabled={busy}>
-            {busy ? 'Creating account…' : 'Create account'}
+            {busy ? 'Creating profile…' : 'Continue'}
           </button>
           <p className="muted small center">
             Already registered? <Link to="/login">Sign in</Link>
           </p>
         </form>
-      </Card>
+      </section>
     </div>
   );
 }

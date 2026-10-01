@@ -19,6 +19,32 @@ import com.fintechplatform.paycore.identity.exception.InvalidRefreshTokenExcepti
 import com.fintechplatform.paycore.identity.exception.LoginSessionNotFoundException;
 import com.fintechplatform.paycore.identity.exception.RefreshTokenReuseException;
 import com.fintechplatform.paycore.identity.exception.SessionTimedOutException;
+import com.fintechplatform.paycore.customer.exception.EmailAlreadyVerifiedException;
+import com.fintechplatform.paycore.customer.exception.InvalidVerificationTokenException;
+import com.fintechplatform.paycore.customer.exception.VerificationEmailRateLimitException;
+import com.fintechplatform.paycore.identity.exception.GoogleSignInDisabledException;
+import com.fintechplatform.paycore.identity.exception.InvalidGoogleTokenException;
+import com.fintechplatform.paycore.ledger.exception.CurrencyMismatchException;
+import com.fintechplatform.paycore.ledger.exception.IdempotencyConflictException;
+import com.fintechplatform.paycore.banktransfer.exception.BankTransfersDisabledException;
+import com.fintechplatform.paycore.banktransfer.exception.BeneficiaryNotFoundException;
+import com.fintechplatform.paycore.banktransfer.exception.InvalidWebhookSignatureException;
+import com.fintechplatform.paycore.banktransfer.exception.SimulatorLimitExceededException;
+import com.fintechplatform.paycore.banktransfer.exception.UnknownBankException;
+import com.fintechplatform.paycore.banktransfer.rail.BankRailException;
+import com.fintechplatform.paycore.ledger.exception.InboundTransferRejectedException;
+import com.fintechplatform.paycore.operations.exception.DuplicateReversalRequestException;
+import com.fintechplatform.paycore.operations.exception.FourEyesViolationException;
+import com.fintechplatform.paycore.operations.exception.OperationsRequestNotFoundException;
+import com.fintechplatform.paycore.operations.exception.RequestAlreadyDecidedException;
+import com.fintechplatform.paycore.funding.exception.FundingDeclinedException;
+import com.fintechplatform.paycore.funding.exception.FundingDisabledException;
+import com.fintechplatform.paycore.funding.exception.FundingProviderException;
+import com.fintechplatform.paycore.ledger.exception.FundingLimitExceededException;
+import com.fintechplatform.paycore.ledger.exception.InsufficientFundsException;
+import com.fintechplatform.paycore.ledger.exception.InvalidLedgerTransactionException;
+import com.fintechplatform.paycore.ledger.exception.LedgerTransactionNotFoundException;
+import com.fintechplatform.paycore.ledger.exception.TransactionNotReversibleException;
 import com.fintechplatform.paycore.kyc.exception.BvnAttemptLimitExceededException;
 import com.fintechplatform.paycore.kyc.exception.BvnIpRateLimitExceededException;
 import com.fintechplatform.paycore.kyc.exception.InvalidKycDocumentException;
@@ -39,6 +65,7 @@ import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @RestControllerAdvice
@@ -449,6 +476,197 @@ public class GlobalExceptionHandler {
                 "ACCOUNT_NUMBER_UNAVAILABLE",
                 "An account number could not be allocated; please try again"
         );
+    }
+
+    @ExceptionHandler(InsufficientFundsException.class)
+    public ResponseEntity<Map<String, Object>> handleInsufficientFunds(
+            InsufficientFundsException exception
+    ) {
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, "INSUFFICIENT_FUNDS", exception.getMessage());
+    }
+
+    @ExceptionHandler(CurrencyMismatchException.class)
+    public ResponseEntity<Map<String, Object>> handleCurrencyMismatch(
+            CurrencyMismatchException exception
+    ) {
+        return error(HttpStatus.BAD_REQUEST, "CURRENCY_MISMATCH", exception.getMessage());
+    }
+
+    @ExceptionHandler(InvalidLedgerTransactionException.class)
+    public ResponseEntity<Map<String, Object>> handleInvalidLedgerTransaction(
+            InvalidLedgerTransactionException exception
+    ) {
+        return error(HttpStatus.BAD_REQUEST, "INVALID_TRANSACTION", exception.getMessage());
+    }
+
+    @ExceptionHandler(LedgerTransactionNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleLedgerTransactionNotFound(
+            LedgerTransactionNotFoundException exception
+    ) {
+        return error(HttpStatus.NOT_FOUND, "TRANSACTION_NOT_FOUND", exception.getMessage());
+    }
+
+    @ExceptionHandler(InvalidVerificationTokenException.class)
+    public ResponseEntity<Map<String, Object>> handleInvalidVerificationToken(
+            InvalidVerificationTokenException exception
+    ) {
+        return error(HttpStatus.BAD_REQUEST, "INVALID_VERIFICATION_TOKEN", exception.getMessage());
+    }
+
+    @ExceptionHandler(EmailAlreadyVerifiedException.class)
+    public ResponseEntity<Map<String, Object>> handleEmailAlreadyVerified(
+            EmailAlreadyVerifiedException exception
+    ) {
+        return error(HttpStatus.CONFLICT, "EMAIL_ALREADY_VERIFIED", exception.getMessage());
+    }
+
+    @ExceptionHandler(VerificationEmailRateLimitException.class)
+    public ResponseEntity<Map<String, Object>> handleVerificationEmailRateLimit(
+            VerificationEmailRateLimitException exception
+    ) {
+        return tooManyRequests(
+                "VERIFICATION_EMAIL_RATE_LIMIT",
+                exception.getMessage(),
+                exception.getRetryAfter()
+        );
+    }
+
+    @ExceptionHandler(InvalidGoogleTokenException.class)
+    public ResponseEntity<Map<String, Object>> handleInvalidGoogleToken(
+            InvalidGoogleTokenException exception
+    ) {
+        return error(HttpStatus.UNAUTHORIZED, "INVALID_GOOGLE_TOKEN", exception.getMessage());
+    }
+
+    @ExceptionHandler(GoogleSignInDisabledException.class)
+    public ResponseEntity<Map<String, Object>> handleGoogleSignInDisabled(
+            GoogleSignInDisabledException exception
+    ) {
+        return error(HttpStatus.NOT_FOUND, "GOOGLE_SIGN_IN_DISABLED", exception.getMessage());
+    }
+
+    @ExceptionHandler(TransactionNotReversibleException.class)
+    public ResponseEntity<Map<String, Object>> handleTransactionNotReversible(
+            TransactionNotReversibleException exception
+    ) {
+        return error(HttpStatus.CONFLICT, "TRANSACTION_NOT_REVERSIBLE", exception.getMessage());
+    }
+
+    @ExceptionHandler(IdempotencyConflictException.class)
+    public ResponseEntity<Map<String, Object>> handleIdempotencyConflict(
+            IdempotencyConflictException exception
+    ) {
+        return error(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_REUSED", exception.getMessage());
+    }
+
+    @ExceptionHandler(FundingLimitExceededException.class)
+    public ResponseEntity<Map<String, Object>> handleFundingLimitExceeded(
+            FundingLimitExceededException exception
+    ) {
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, "FUNDING_LIMIT_EXCEEDED", exception.getMessage());
+    }
+
+    /**
+     * The provider's payment reference is returned so the customer can
+     * quote it; nothing was credited.
+     */
+    @ExceptionHandler(FundingDeclinedException.class)
+    public ResponseEntity<Map<String, Object>> handleFundingDeclined(
+            FundingDeclinedException exception
+    ) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("timestamp", Instant.now());
+        body.put("status", 422);
+        body.put("error", "PAYMENT_DECLINED");
+        body.put("message", exception.getMessage());
+        body.put("providerReference", exception.getProviderReference());
+
+        return ResponseEntity.unprocessableEntity().body(body);
+    }
+
+    @ExceptionHandler(FundingDisabledException.class)
+    public ResponseEntity<Map<String, Object>> handleFundingDisabled(
+            FundingDisabledException exception
+    ) {
+        return error(HttpStatus.NOT_FOUND, "FUNDING_DISABLED", exception.getMessage());
+    }
+
+    /**
+     * Provider details are logged, not returned to the client.
+     */
+    @ExceptionHandler(FundingProviderException.class)
+    public ResponseEntity<Map<String, Object>> handleFundingProvider(
+            FundingProviderException exception
+    ) {
+        log.warn("Funding provider failure: {}", exception.getMessage(), exception.getCause());
+
+        return error(
+                HttpStatus.BAD_GATEWAY,
+                "PAYMENT_PROVIDER_UNAVAILABLE",
+                "Payments are temporarily unavailable; you have not been charged"
+        );
+    }
+
+    @ExceptionHandler(BankTransfersDisabledException.class)
+    public ResponseEntity<Map<String, Object>> handleBankTransfersDisabled(BankTransfersDisabledException exception) {
+        return error(HttpStatus.NOT_FOUND, "BANK_TRANSFERS_DISABLED", exception.getMessage());
+    }
+
+    @ExceptionHandler(BeneficiaryNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleBeneficiaryNotFound(BeneficiaryNotFoundException exception) {
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, "BENEFICIARY_NOT_FOUND", exception.getMessage());
+    }
+
+    @ExceptionHandler(UnknownBankException.class)
+    public ResponseEntity<Map<String, Object>> handleUnknownBank(UnknownBankException exception) {
+        return error(HttpStatus.BAD_REQUEST, "UNKNOWN_BANK", exception.getMessage());
+    }
+
+    @ExceptionHandler(InvalidWebhookSignatureException.class)
+    public ResponseEntity<Map<String, Object>> handleInvalidWebhookSignature(InvalidWebhookSignatureException exception) {
+        return error(HttpStatus.UNAUTHORIZED, "INVALID_SIGNATURE", exception.getMessage());
+    }
+
+    @ExceptionHandler(SimulatorLimitExceededException.class)
+    public ResponseEntity<Map<String, Object>> handleSimulatorLimit(SimulatorLimitExceededException exception) {
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, "SIMULATOR_LIMIT_EXCEEDED", exception.getMessage());
+    }
+
+    @ExceptionHandler(InboundTransferRejectedException.class)
+    public ResponseEntity<Map<String, Object>> handleInboundRejected(InboundTransferRejectedException exception) {
+        return error(HttpStatus.UNPROCESSABLE_ENTITY, "INBOUND_TRANSFER_REJECTED", exception.getMessage());
+    }
+
+    /** Rail details are logged, not returned. Nothing was debited. */
+    @ExceptionHandler(BankRailException.class)
+    public ResponseEntity<Map<String, Object>> handleBankRail(BankRailException exception) {
+        log.warn("Bank rail failure: {}", exception.getMessage(), exception.getCause());
+
+        return error(
+                HttpStatus.BAD_GATEWAY,
+                "BANK_RAIL_UNAVAILABLE",
+                "Transfers to other banks are temporarily unavailable; no money has left your account"
+        );
+    }
+
+    @ExceptionHandler(FourEyesViolationException.class)
+    public ResponseEntity<Map<String, Object>> handleFourEyes(FourEyesViolationException exception) {
+        return error(HttpStatus.FORBIDDEN, "FOUR_EYES_REQUIRED", exception.getMessage());
+    }
+
+    @ExceptionHandler(RequestAlreadyDecidedException.class)
+    public ResponseEntity<Map<String, Object>> handleRequestDecided(RequestAlreadyDecidedException exception) {
+        return error(HttpStatus.CONFLICT, "REQUEST_ALREADY_DECIDED", exception.getMessage());
+    }
+
+    @ExceptionHandler(OperationsRequestNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleRequestNotFound(OperationsRequestNotFoundException exception) {
+        return error(HttpStatus.NOT_FOUND, "REQUEST_NOT_FOUND", exception.getMessage());
+    }
+
+    @ExceptionHandler(DuplicateReversalRequestException.class)
+    public ResponseEntity<Map<String, Object>> handleDuplicateReversal(DuplicateReversalRequestException exception) {
+        return error(HttpStatus.CONFLICT, "DUPLICATE_REVERSAL_REQUEST", exception.getMessage());
     }
 
     /**

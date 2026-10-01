@@ -10,11 +10,17 @@ const BUILT = [
   ['RBAC', 'Roles → permissions, enforced with @PreAuthorize, with an audited role history'],
   ['KYC', 'Status workflow, BVN and NIN checks behind a provider interface, document upload, compliance review'],
   ['Abuse limits', 'BVN/NIN retry limits per customer and per network'],
+  ['Accounts', 'NUBAN account numbers, activated only after KYC, audited freeze and close'],
+  ['Double-entry ledger', 'Balances derived from immutable entries, idempotent transfers, row locks against double spending'],
+  ['Money in', 'Inbound bank transfers by signed webhook (NIP-style session ids) and card top-ups, credited only when the rail or processor confirms'],
+  ['Money out', 'Transfers to other banks with name enquiry; rejected payments reversed automatically'],
+  ['Maker-checker', 'Reversals and adjustments need two operations officers; nobody moves money alone'],
+  ['Account statements', 'Opening, closing and running balances per Lagos calendar day'],
   ['PostgreSQL + Flyway', 'Versioned schema migrations and UUIDv7 keys'],
   ['Automated tests', 'Unit tests plus Testcontainers integration tests'],
 ];
 
-const NEXT = ['Account management', 'Ledger', 'Transactions', 'Payments'];
+const NEXT = ['Real payment rail (NIBSS NIP via a provider)', 'Limits by KYC tier', 'Transaction PIN and device binding', 'Bill payments'];
 
 export function Home() {
   const { done } = useJourney();
@@ -27,9 +33,12 @@ export function Home() {
           PayCore <span className="hero-tag">Developer Preview</span>
         </h1>
         <p className="lede">
-          This is the payment infrastructure backend I'm building in Java and Spring Boot. It's still early, so this thin
-          UI is here to let you try what already works instead of only reading about it: register, sign in, go through
-          KYC, test the security rules, then switch to the admin account and review your own application.
+          This is the payment infrastructure backend I'm building in Java and Spring Boot. This thin UI is here to let
+          you try what already works instead of only reading about it: open an account, verify your identity, then
+          receive money from a simulated other bank and send it on, inside PayCore or out to another bank. Staff work in
+          a separate back office: the compliance admin activates accounts, and two operations officers must agree on any
+          correction. Every endpoint is also
+          documented at <code>/swagger-ui.html</code>.
         </p>
         <div className="hero-actions">
           <Link to="/register" className="btn btn-primary btn-lg">
@@ -78,6 +87,13 @@ export function Home() {
         <div className="arch-node">
           <strong>KycProvider</strong>
           <span>Simulated · Dojah sandbox</span>
+        </div>
+        <div className="arch-arrow" aria-hidden>
+          ⇢
+        </div>
+        <div className="arch-node">
+          <strong>BankRail</strong>
+          <span>Simulated Test Bank · NIP-style webhooks</span>
         </div>
       </section>
 

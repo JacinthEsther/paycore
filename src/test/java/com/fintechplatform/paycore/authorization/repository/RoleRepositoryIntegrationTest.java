@@ -14,6 +14,8 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -60,7 +62,8 @@ class RoleRepositoryIntegrationTest {
                 .contains(
                         RoleName.CUSTOMER,
                         RoleName.SUPPORT,
-                        RoleName.ADMIN
+                        RoleName.ADMIN,
+                        RoleName.OPERATIONS
                 );
     }
 
@@ -115,6 +118,26 @@ class RoleRepositoryIntegrationTest {
                         "ACCOUNT_VIEW_ALL",
                         "ACCOUNT_MANAGE"
                 );
+    }
+
+    /**
+     * Operations officers request and approve money corrections; nobody
+     * else touches money, and they cannot manage customers or roles.
+     */
+    @Test
+    void shouldSeedOperationsRolePermissions() {
+
+        assertThat(permissionsOf(RoleName.OPERATIONS))
+                .containsExactlyInAnyOrder(
+                        "CUSTOMER_READ",
+                        "ACCOUNT_VIEW_ALL",
+                        "LEDGER_REQUEST",
+                        "LEDGER_APPROVE"
+                );
+
+        for (String role : List.of(RoleName.CUSTOMER, RoleName.SUPPORT, RoleName.ADMIN)) {
+            assertThat(permissionsOf(role)).doesNotContain("LEDGER_REQUEST", "LEDGER_APPROVE");
+        }
     }
 
     @Test

@@ -18,6 +18,10 @@ import java.util.regex.Pattern;
  *
  * There are no setters: the account number, owner and currency never
  * change, and the status only moves through the transition methods.
+ *
+ * System accounts (see {@link AccountType#isSystem()}) are PayCore's own
+ * side of the ledger. They have no customer and no account number, and
+ * are created by the ledger, never through {@link #open}.
  */
 @Entity
 @Table(
@@ -38,11 +42,13 @@ public class Account {
     @UuidV7
     private UUID id;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "customer_id", nullable = false, updatable = false)
+    /** Null only for system accounts. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "customer_id", updatable = false)
     private Customer customer;
 
-    @Column(name = "account_number", nullable = false, length = 10, updatable = false)
+    /** Null only for system accounts. */
+    @Column(name = "account_number", length = 10, updatable = false)
     private String accountNumber;
 
     @Enumerated(EnumType.STRING)
@@ -84,6 +90,10 @@ public class Account {
     ) {
         Objects.requireNonNull(customer, "customer");
         Objects.requireNonNull(type, "type");
+
+        if (type.isSystem()) {
+            throw new IllegalArgumentException(type + " is a system account and cannot be opened");
+        }
 
         if (accountNumber == null || !ACCOUNT_NUMBER.matcher(accountNumber).matches()) {
             throw new IllegalArgumentException("Account number must be 10 digits");
@@ -164,7 +174,11 @@ public class Account {
     }
 
     public boolean isOwnedBy(UUID customerId) {
-        return customer.getId().equals(customerId);
+        return customer != null && customer.getId().equals(customerId);
+    }
+
+    public boolean isSystemAccount() {
+        return type.isSystem();
     }
 
     private void touch() {

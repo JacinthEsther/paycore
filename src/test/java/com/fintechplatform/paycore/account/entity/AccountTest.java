@@ -52,6 +52,26 @@ class AccountTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test
+    void shouldNotOpenSystemAccountForCustomer() {
+
+        assertThatThrownBy(() ->
+                Account.open(customer, "1234567896", AccountType.SETTLEMENT, "NGN")
+        )
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("system account");
+    }
+
+    @Test
+    void customerAccountIsOwnedOnlyByItsCustomer() {
+
+        Account account = pendingAccount();
+
+        assertThat(account.isSystemAccount()).isFalse();
+        assertThat(account.isOwnedBy(customer.getId())).isTrue();
+        assertThat(account.isOwnedBy(UUID.randomUUID())).isFalse();
+    }
+
     // ------------------------------------------------------------
     // activate
     // ------------------------------------------------------------

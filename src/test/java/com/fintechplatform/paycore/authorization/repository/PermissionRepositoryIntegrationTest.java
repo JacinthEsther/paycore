@@ -71,7 +71,9 @@ class PermissionRepositoryIntegrationTest {
                         "TRANSACTION_CREATE",
                         "ACCOUNT_OPEN",
                         "ACCOUNT_VIEW_ALL",
-                        "ACCOUNT_MANAGE"
+                        "ACCOUNT_MANAGE",
+                        "LEDGER_REQUEST",
+                        "LEDGER_APPROVE"
                 );
     }
 

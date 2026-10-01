@@ -117,6 +117,21 @@ public class AuthenticationService {
         );
     }
 
+    /**
+     * For a customer who proved who they are another way (Google sign-in):
+     * the same status check and the same session and tokens as a password
+     * login. Runs in the caller's transaction.
+     */
+    public LoginResult startSessionFor(
+            Customer customer,
+            AuthenticationContext context
+    ) {
+
+        validateCustomerCanLogin(customer);
+
+        return startSession(customer, context);
+    }
+
     private LoginResult startSession(
             Customer customer,
             AuthenticationContext context

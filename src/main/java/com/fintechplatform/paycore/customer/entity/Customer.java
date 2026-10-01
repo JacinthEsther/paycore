@@ -40,7 +40,8 @@ public class Customer {
     @Column(nullable = false, length = 255)
     private String email;
 
-    @Column(name = "phone_number", nullable = false, length = 20)
+    /** Null for a customer created through Google sign-in until they add one. */
+    @Column(name = "phone_number", length = 20)
     private String phoneNumber;
 
     @Enumerated(EnumType.STRING)

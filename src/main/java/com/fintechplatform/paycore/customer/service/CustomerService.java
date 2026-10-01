@@ -11,6 +11,7 @@ import com.fintechplatform.paycore.customer.dto.response.CustomerResponse;
 import com.fintechplatform.paycore.customer.dto.response.CustomerSummaryResponse;
 import com.fintechplatform.paycore.customer.entity.Customer;
 import com.fintechplatform.paycore.customer.event.CustomerAccessRevokedEvent;
+import com.fintechplatform.paycore.customer.event.CustomerEmailChangedEvent;
 import com.fintechplatform.paycore.customer.event.CustomerRegisteredEvent;
 import com.fintechplatform.paycore.customer.exception.CustomerNotFoundException;
 import com.fintechplatform.paycore.customer.exception.DuplicateCustomerException;
@@ -160,6 +161,33 @@ public class CustomerService {
         return toResponse(savedCustomer);
     }
 
+    /**
+     * A customer whose email an identity provider has already verified
+     * (sign-up with Google): active straight away, with the CUSTOMER role
+     * and a KYC profile, but no password and no phone number yet. The
+     * caller adds the sign-in identity in the same transaction.
+     */
+    @Transactional
+    public Customer createVerifiedCustomer(String firstName, String lastName, String email) {
+
+        Customer customer = Customer.create(firstName, lastName, normalizeEmail(email), null);
+        customer.verifyEmail();
+        customer.activate();
+
+        Customer savedCustomer = customerRepository.saveAndFlush(customer);
+
+        roleAssignmentService.assignRole(
+                savedCustomer,
+                RoleName.CUSTOMER,
+                null,
+                "Default role on sign-up with Google"
+        );
+
+        eventPublisher.publishEvent(new CustomerRegisteredEvent(savedCustomer.getId()));
+
+        return savedCustomer;
+    }
+
     @Transactional(readOnly = true)
     public CustomerResponse getCustomer(UUID customerId) {
 
@@ -275,6 +303,13 @@ public class CustomerService {
                 }
 
                 customer.changeEmail(newEmail);
+
+                // The password identity's subject is the email; left as the
+                // old address it would block anyone registering with it.
+                identityService.changePasswordIdentitySubject(customer, newEmail);
+
+                // Unverified again: a link goes to the new address.
+                eventPublisher.publishEvent(new CustomerEmailChangedEvent(customer.getId()));
             }
         }
 
@@ -434,7 +469,7 @@ public class CustomerService {
                 .toUpperCase();
     }
 
-    private CustomerResponse toResponse(
+    public CustomerResponse toResponse(
             Customer customer
     ) {
 

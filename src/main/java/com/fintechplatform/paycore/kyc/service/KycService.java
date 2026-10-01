@@ -165,6 +165,11 @@ public class KycService {
             missing.add("identity document");
         }
 
+        // Customers who signed up with Google have none until they add one.
+        if (profile.getCustomer().getPhoneNumber() == null) {
+            missing.add("phone number on your profile");
+        }
+
         if (!missing.isEmpty()) {
             throw new KycIncompleteException(missing);
         }

@@ -3,6 +3,8 @@ package com.fintechplatform.paycore.identity.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fintechplatform.paycore.customer.entity.Customer;
 import com.fintechplatform.paycore.customer.enums.CustomerStatus;
+import com.fintechplatform.paycore.identity.google.GoogleProperties;
+import com.fintechplatform.paycore.identity.google.GoogleSignInService;
 import com.fintechplatform.paycore.identity.config.IdentityConfiguration;
 import com.fintechplatform.paycore.identity.dto.AuthenticationContext;
 import com.fintechplatform.paycore.identity.dto.LoginRequest;
@@ -59,6 +61,13 @@ class AuthenticationControllerTest {
 
     @MockitoBean
     private AuthenticationService authenticationService;
+
+    // Google sign-in is covered by GoogleSignInIntegrationTest.
+    @MockitoBean
+    private GoogleSignInService googleSignInService;
+
+    @MockitoBean
+    private GoogleProperties googleProperties;
 
     // Needed by CurrentUserJwtAuthenticationConverter, which this slice loads.
     @MockitoBean

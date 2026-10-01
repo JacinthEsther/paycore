@@ -96,6 +96,10 @@ public class AccountService {
             OpenAccountRequest request
     ) {
 
+        if (request.type().isSystem()) {
+            throw new IllegalArgumentException("Customers cannot open " + request.type() + " accounts");
+        }
+
         String currency = normalizeCurrency(request.currency());
 
         for (int attempt = 1; attempt <= MAX_ACCOUNT_NUMBER_ATTEMPTS; attempt++) {
@@ -329,10 +333,15 @@ public class AccountService {
         return code;
     }
 
+    /**
+     * Customer accounts only: system accounts are the ledger's, not
+     * something staff view, activate, freeze or close here.
+     */
     private Account findAccount(UUID accountId) {
 
         return accountRepository
                 .findById(accountId)
+                .filter(account -> !account.isSystemAccount())
                 .orElseThrow(() -> new AccountNotFoundException(accountId));
     }
 

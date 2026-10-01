@@ -65,7 +65,7 @@ export function Kyc() {
 
   return (
     <>
-      <PageHeader eyebrow="Step 4 · Customer" title="Identity verification">
+      <PageHeader eyebrow="Account opening" title="Verify your identity">
         KYC is a state machine on the server. Each button calls one endpoint, and the backend refuses any step that
         doesn't fit the current state. Try submitting before you've checked a BVN or NIN to see it happen.
       </PageHeader>
@@ -155,11 +155,11 @@ export function Kyc() {
             <code>KYC_REVIEW</code> permission, and the backend also blocks reviewers from acting on their own profile.
           </p>
           <p>
-            Next, test the security rules. After that, switch to the admin account and review this application
-            yourself.
+            Next, open your naira account. Then sign in as the compliance admin, review this
+            application yourself and activate the account.
           </p>
-          <Link className="btn btn-primary" to="/app/security">
-            Test the security rules →
+          <Link className="btn btn-primary" to="/app">
+            Open an account →
           </Link>
         </Card>
       )}

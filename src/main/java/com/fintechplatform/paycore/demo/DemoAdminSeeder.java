@@ -17,6 +17,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.annotation.Order;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,9 +25,10 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.Optional;
 
 /**
- * Creates the shared demo admin once the application is ready, or repairs
- * it: after every restart it is ACTIVE, has the CUSTOMER and ADMIN roles
- * and accepts the configured password.
+ * Creates the shared demo staff once the application is ready, or repairs
+ * them: after every restart the admin is ACTIVE with the CUSTOMER and
+ * ADMIN roles, each operations officer ({@link DemoStaff}) is ACTIVE with
+ * the OPERATIONS role, and all accept the configured password.
  */
 @Component
 @ConditionalOnProperty(name = "paycore.demo.enabled", havingValue = "true")
@@ -82,7 +84,9 @@ public class DemoAdminSeeder {
         }
     }
 
+    /** Runs before DemoRecipientSeeder, which records the admin as activating its account. */
     @EventListener(ApplicationReadyEvent.class)
+    @Order(1)
     @Transactional
     public void seed() {
 
@@ -103,6 +107,42 @@ public class DemoAdminSeeder {
         customerRepository.save(admin);
 
         log.info("Demo admin ready: {}", email);
+
+        for (DemoStaff staff : DemoStaff.ALL) {
+            seedOperationsOfficer(staff);
+        }
+    }
+
+    /**
+     * The same treatment for an operations officer: ACTIVE, the OPERATIONS
+     * role only (no customer app, no admin powers), the demo password.
+     */
+    private void seedOperationsOfficer(DemoStaff staff) {
+
+        // Not a registration: officers are employees, not customers, so they
+        // get no KYC profile (and no place in the KYC review queue).
+        Customer officer =
+                customerRepository
+                        .findByEmail(staff.email())
+                        .orElseGet(() -> customerRepository.save(
+                                Customer.create(
+                                        staff.firstName(),
+                                        staff.lastName(),
+                                        staff.email(),
+                                        phoneNumberService.normalize(
+                                                staff.phoneNumber(),
+                                                properties.getAdminCountryCode()
+                                        )
+                                )
+                        ));
+
+        activate(officer);
+        ensureRole(officer, DemoStaff.ROLE);
+        ensurePassword(officer, properties.getAdminPassword());
+
+        customerRepository.save(officer);
+
+        log.info("Demo operations officer ready: {}", staff.email());
     }
 
     private Customer createAdmin(String email) {
@@ -129,19 +169,18 @@ public class DemoAdminSeeder {
         return admin;
     }
 
-    private void activate(Customer admin) {
+    private void activate(Customer staff) {
 
-        if (!admin.isEmailVerified()) {
-            admin.verifyEmail();
+        if (!staff.isEmailVerified()) {
+            staff.verifyEmail();
         }
 
-        switch (admin.getStatus()) {
-            case PENDING_VERIFICATION -> admin.activate();
-            case SUSPENDED -> admin.reactivate();
+        switch (staff.getStatus()) {
+            case PENDING_VERIFICATION -> staff.activate();
+            case SUSPENDED -> staff.reactivate();
             case ACTIVE -> { }
             case CLOSED -> throw new IllegalStateException(
-                    "The demo admin account is closed; set a different "
-                            + "paycore.demo.admin-email"
+                    "The demo staff account " + staff.getEmail() + " is closed"
             );
         }
     }

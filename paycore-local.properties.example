@@ -25,5 +25,26 @@ DOJAH_SECRET_KEY=
 # admin whose password is shown to every visitor of the demo UI.
 #PAYCORE_DEMO_ENABLED=true
 #PAYCORE_DEMO_ADMIN_PASSWORD=
+# Let customers top up their own accounts with fake card payments (demo
+# only: the balances are not backed by real money). Default: none.
+#PAYCORE_FUNDING_PROVIDER=simulated
+#PAYCORE_FUNDING_MAX_TOTAL_PER_ACCOUNT=500000
+# Transfers to and from other banks through a simulated rail ("Test Bank").
+#PAYCORE_RAILS_PROVIDER=simulated
+# Signs inbound transfer webhooks; blank disables the webhook.
+#PAYCORE_RAILS_WEBHOOK_SECRET=
 # Only needed when the UI runs on a different origin than the API.
 #PAYCORE_CORS_ALLOWED_ORIGINS=http://localhost:5173
+
+# Verification emails. Without SMTP they are only written to the log.
+# Local Mailpit (docker run -p 1025:1025 -p 8025:8025 axllent/mailpit),
+# inbox at http://localhost:8025:
+#SPRING_MAIL_HOST=localhost
+#SPRING_MAIL_PORT=1025
+# Where the web app runs; verification links point there.
+#PAYCORE_PUBLIC_URL=http://localhost:5173
+
+# Sign in with Google: client id of a "Web application" OAuth client in
+# Google Cloud Console, with http://localhost:5173 as an authorised
+# JavaScript origin. No client secret is needed.
+#PAYCORE_GOOGLE_CLIENT_ID=

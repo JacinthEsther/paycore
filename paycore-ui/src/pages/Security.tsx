@@ -3,7 +3,6 @@ import { api, ApiError, getSession, type AuthMode } from '../api/client';
 import type { Kyc } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { Card, formatDate, HttpStatus, PageHeader } from '../components/ui';
-import { markDone } from '../journey';
 
 interface Probe {
   id: string;
@@ -104,17 +103,15 @@ export function Security() {
     const statuses: (number | null)[] = [];
     for (const probe of PROBES) statuses.push(await runProbe(probe));
     setRunning(false);
-    if (PROBES.every((p, i) => statuses[i] === p.expected(isAdmin, kycId))) markDone('security');
   }
 
   async function switchToAdmin() {
-    markDone('security');
-    await logout('/login?as=admin&switched=1');
+    await logout('/login?as=staff&switched=1');
   }
 
   return (
     <>
-      <PageHeader eyebrow="Step 5 · Customer" title="Test the security rules">
+      <PageHeader eyebrow="Security" title="Try to break in">
         The UI hides buttons you can't use, but the backend is what actually enforces access. These requests go straight
         to the API, some with a missing or tampered token or without the right permission. Each one should fail with
         the status shown.

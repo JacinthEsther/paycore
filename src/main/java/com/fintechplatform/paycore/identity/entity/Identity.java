@@ -82,6 +82,33 @@ public class Identity {
 
 
 
+    /**
+     * Signs in with Google. The subject is Google's stable account id
+     * ("sub"), never the email, which a Google user can change.
+     */
+    public static Identity createGoogleIdentity(
+            Customer customer,
+            String googleSubject
+    ) {
+        Identity identity = new Identity();
+
+        identity.customer = customer;
+        identity.provider = IdentityProvider.GOOGLE;
+        identity.providerSubject = googleSubject;
+        identity.enabled = true;
+
+        identity.createdAt = Instant.now();
+        identity.updatedAt = identity.createdAt;
+
+        return identity;
+    }
+
+    /** For a password identity, whose subject is the customer's email. */
+    public void changeProviderSubject(String providerSubject) {
+        this.providerSubject = providerSubject;
+        touch();
+    }
+
     public void changePasswordHash(String passwordHash) {
         this.passwordHash = passwordHash;
         touch();

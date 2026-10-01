@@ -1,0 +1,41 @@
+PayCore update: Accounts and the Ledger.
+
+Building a financial system turns out to be less about CRUD endpoints and more about deciding what the system must never allow.
+
+An account is where money is held, not the money itself. There is no mutable balance column. An account has an owner, a unique account number, a type, a currency and a status, and the database enforces the rules: unique account numbers, one account per type and currency per customer, a foreign key to the customer.
+
+Checking "does this account number exist?" before inserting is useful, but under concurrency it can't be the final authority. The unique constraint is.
+
+Application validation improves the experience. Database constraints protect the invariant.
+
+There is no setStatus(). The domain only allows real transitions:
+PENDING → ACTIVE
+ACTIVE ⇄ FROZEN
+ACTIVE/FROZEN → CLOSED
+and an account only becomes ACTIVE once the customer's KYC is verified.
+
+The balance comes from an immutable double-entry ledger, calculated every time it's requested.
+
+A ₦20,000 transfer is one transaction with two entries:
+Account A → DEBIT ₦20,000
+Account B → CREDIT ₦20,000
+
+Total debits must equal total credits. Amounts are whole kobo, never floating point, always positive. Posted entries are never edited: a mistake is undone by a new reversal transaction, so the history of how every balance came to exist stays intact.
+
+So where does money come from in the first place? Not from a button. A deposit means real money reached PayCore's bank, so it is posted against a settlement account:
+Settlement → DEBIT
+Customer → CREDIT
+
+When a customer adds money, the ledger credits them only after the payment provider confirms the payment. The provider's payment reference is unique in the database, so one payment can never be credited twice. (In the public preview the provider is simulated: no real money moves.)
+
+Concurrency: an account holding ₦100,000 receives two simultaneous ₦80,000 transfers. A naive implementation lets both see ₦100,000 and approves both. PayCore locks the accounts in a fixed order inside one database transaction and checks the balance under that lock. Exactly one succeeds, and transfers in opposite directions can't deadlock.
+
+Idempotency: a client sends ₦20,000, the network drops the response, the client retries. The retry returns the original transaction instead of moving another ₦20,000, backed by a unique constraint on the idempotency key. For top-ups the retry is recognised before the provider is asked, so the customer is never charged twice.
+
+All of it is tested against real PostgreSQL, including the concurrent cases.
+
+The hard part was never writing @PostMapping. It was deciding what must always be true, then making the Java code, database constraints, transactions and locks enforce it together.
+
+Next: the payments architecture, webhooks from real providers, and refunds.
+
+#Java #SpringBoot #Fintech #BackendEngineering #PostgreSQL #SystemDesign #SoftwareEngineering
