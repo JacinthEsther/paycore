@@ -72,13 +72,60 @@ class KycProfileTest {
     void shouldApproveKyc() {
 
         underReview();
-        profile.approve(REVIEWER);
+        profile.approve(REVIEWER, 1);
 
         assertThat(profile.getStatus()).isEqualTo(KycStatus.VERIFIED);
         assertThat(profile.isVerified()).isTrue();
         assertThat(profile.getReviewedBy()).isEqualTo(REVIEWER);
         assertThat(profile.getReviewedAt()).isNotNull();
         assertThat(profile.getReviewReason()).isNull();
+    }
+
+    @Test
+    void newProfileShouldHaveNoTier() {
+
+        assertThat(profile.getTier()).isZero();
+    }
+
+    @Test
+    void approvalShouldSetTheTierTheEvidenceEarned() {
+
+        underReview();
+        profile.approve(REVIEWER, 2);
+
+        assertThat(profile.getTier()).isEqualTo(2);
+    }
+
+    @Test
+    void tierShouldOnlyGoUp() {
+
+        underReview();
+        profile.approve(REVIEWER, 2);
+
+        profile.raiseTier(1);
+        assertThat(profile.getTier()).isEqualTo(2);
+
+        profile.raiseTier(3);
+        assertThat(profile.getTier()).isEqualTo(3);
+    }
+
+    @Test
+    void unverifiedProfileShouldNotMoveUpATier() {
+
+        underReview();
+
+        assertThatThrownBy(() -> profile.raiseTier(2))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void tierShouldBeOneToThree() {
+
+        underReview();
+
+        assertThatThrownBy(() -> profile.approve(REVIEWER, 4))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(profile.getStatus()).isEqualTo(KycStatus.UNDER_REVIEW);
     }
 
     @Test
@@ -121,10 +168,9 @@ class KycProfileTest {
         profile.start();
         profile.submit();
         profile.startReview();
-        profile.approve(REVIEWER);
+        profile.approve(REVIEWER, 1);
 
         assertThat(profile.getStatus()).isEqualTo(KycStatus.VERIFIED);
-        // The earlier request's reason no longer applies.
         assertThat(profile.getReviewReason()).isNull();
     }
 
@@ -141,7 +187,7 @@ class KycProfileTest {
     @Test
     void shouldNotApproveKycBeforeReview() {
 
-        assertThatThrownBy(() -> profile.approve(REVIEWER))
+        assertThatThrownBy(() -> profile.approve(REVIEWER, 1))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("NOT_STARTED");
     }
@@ -204,7 +250,7 @@ class KycProfileTest {
     void shouldNotReopenVerifiedKyc() {
 
         underReview();
-        profile.approve(REVIEWER);
+        profile.approve(REVIEWER, 1);
 
         assertThatThrownBy(profile::start)
                 .isInstanceOf(IllegalStateException.class)
@@ -279,7 +325,7 @@ class KycProfileTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("BVN attempts cannot be reset from status UNDER_REVIEW");
 
-        profile.approve(REVIEWER);
+        profile.approve(REVIEWER, 1);
 
         assertThatThrownBy(() -> profile.resetBvnAttempts(UUID.randomUUID()))
                 .isInstanceOf(IllegalStateException.class);

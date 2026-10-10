@@ -8,10 +8,6 @@ import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
 
-/**
- * The signed-in customer sending money from their Test Bank account to a
- * PayCore account (usually their own).
- */
 public record SimulatedInboundRequest(
 
         @NotBlank(message = "Destination account number is required")

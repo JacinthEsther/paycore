@@ -25,11 +25,6 @@ import java.util.HexFormat;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-/**
- * Inbound transfer notifications from the bank rail. Only a notification
- * signed with the shared webhook secret is believed: anyone can reach the
- * URL, and an unsigned "money arrived" message would let them mint money.
- */
 @Service
 public class InboundWebhookService {
 
@@ -55,10 +50,6 @@ public class InboundWebhookService {
         this.validator = validator;
     }
 
-    /**
-     * Verifies the signature over the exact bytes received, then credits
-     * the transfer (idempotently, by session id).
-     */
     public TransactionResponse receive(String rawBody, String signature) {
 
         BankRail rail = rails.getIfAvailable();
@@ -94,7 +85,6 @@ public class InboundWebhookService {
         );
     }
 
-    /** Lower-case hex HMAC-SHA256 of the body: what the rail must send. */
     public static String sign(String secret, String body) {
 
         try {

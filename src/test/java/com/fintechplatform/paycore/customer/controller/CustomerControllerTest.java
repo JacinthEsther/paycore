@@ -30,14 +30,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc(addFilters = false)
 class CustomerControllerTest {
 
-
     @Autowired
     private MockMvc mockMvc;
 
     @MockitoBean
     private CustomerService customerService;
 
-    // Needed by CurrentUserJwtAuthenticationConverter, which this slice loads.
     @MockitoBean
     private LoginSessionRepository loginSessionRepository;
 

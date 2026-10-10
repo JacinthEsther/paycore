@@ -91,10 +91,6 @@ class CustomerServiceTest {
         );
     }
 
-    // ============================================================
-    // REGISTRATION
-    // ============================================================
-
     @Test
     void shouldAssignCustomerRoleOnRegistration() {
 
@@ -115,7 +111,6 @@ class CustomerServiceTest {
         verify(customerRepository)
                 .saveAndFlush(captor.capture());
 
-        // System-assigned, so no acting admin is recorded.
         verify(roleAssignmentService).assignRole(
                 eq(captor.getValue()),
                 eq(RoleName.CUSTOMER),
@@ -145,8 +140,6 @@ class CustomerServiceTest {
                         anyString()
                 );
 
-        // The exception rolls back the @Transactional registration, so the
-        // saved customer is not committed.
         assertThatThrownBy(() ->
                 customerService.register(request)
         )
@@ -209,7 +202,6 @@ class CustomerServiceTest {
                         eq("hashed-password")
                 );
 
-        // KYC listens for this to create the customer's profile.
         verify(eventPublisher)
                 .publishEvent(any(CustomerRegisteredEvent.class));
     }
@@ -265,10 +257,6 @@ class CustomerServiceTest {
         assertThat(savedCustomer.getUpdatedAt())
                 .isNotNull();
 
-        /*
-         * Password is no longer part of Customer.
-         * It must be passed to IdentityService instead.
-         */
         verify(identityService)
                 .createPasswordIdentity(
                         same(savedCustomer),
@@ -295,18 +283,12 @@ class CustomerServiceTest {
         verify(passwordEncoder)
                 .encode("Password123!");
 
-        /*
-         * The encoded password must be sent to IdentityService.
-         */
         verify(identityService)
                 .createPasswordIdentity(
                         any(Customer.class),
                         eq("bcrypt-hash")
                 );
 
-        /*
-         * The raw password must never be sent to IdentityService.
-         */
         verify(identityService, never())
                 .createPasswordIdentity(
                         any(Customer.class),
@@ -328,7 +310,6 @@ class CustomerServiceTest {
                 .isInstanceOf(DuplicateCustomerException.class)
                 .hasMessage("Email is already registered");
 
-        // The insert failed first, so nothing else was written.
         verify(identityService, never())
                 .createPasswordIdentity(
                         any(Customer.class),
@@ -383,14 +364,12 @@ class CustomerServiceTest {
 
         customerService.register(request);
 
-        // BCrypt is slow on purpose; no pooled connection may wait on it.
         var order = inOrder(passwordEncoder, transactionManager, customerRepository);
         order.verify(passwordEncoder).encode("Password123!");
         order.verify(transactionManager).getTransaction(any());
         order.verify(customerRepository).saveAndFlush(any(Customer.class));
         order.verify(transactionManager).commit(any());
 
-        // Duplicates come from the unique constraints, not extra queries.
         verify(customerRepository, never()).existsByEmail(anyString());
         verify(customerRepository, never()).existsByPhoneNumber(anyString());
     }
@@ -427,8 +406,6 @@ class CustomerServiceTest {
         verify(customerRepository)
                 .saveAndFlush(captor.capture());
 
-        // The unique constraint only catches duplicates if every email is
-        // stored in the same form.
         assertThat(captor.getValue().getEmail())
                 .isEqualTo("esther@example.com");
     }
@@ -594,10 +571,6 @@ class CustomerServiceTest {
         );
     }
 
-    // ============================================================
-    // GET CUSTOMER
-    // ============================================================
-
     @Test
     void shouldGetCustomerProfile() {
 
@@ -651,10 +624,6 @@ class CustomerServiceTest {
                         customerId.toString()
                 );
     }
-
-    // ============================================================
-    // PROFILE UPDATE
-    // ============================================================
 
     @Test
     void shouldUpdateCustomerFirstName() {
@@ -1185,10 +1154,6 @@ class CustomerServiceTest {
                 .save(any(Customer.class));
     }
 
-    // ============================================================
-    // SUSPENSION
-    // ============================================================
-
     @Test
     void shouldSuspendActiveCustomer() {
 
@@ -1333,10 +1298,6 @@ class CustomerServiceTest {
                 .save(any(Customer.class));
     }
 
-    // ============================================================
-    // REACTIVATION
-    // ============================================================
-
     @Test
     void shouldReactivateSuspendedCustomer() {
 
@@ -1454,10 +1415,6 @@ class CustomerServiceTest {
         verify(customerRepository, never())
                 .save(any(Customer.class));
     }
-
-    // ============================================================
-    // CLOSURE
-    // ============================================================
 
     @Test
     void shouldCloseCustomerAccount() {

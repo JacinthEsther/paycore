@@ -24,6 +24,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -45,7 +46,6 @@ public class CustomerService {
     private final ApplicationEventPublisher eventPublisher;
     private final TransactionTemplate transactionTemplate;
 
-
     public CustomerService(
             CustomerRepository customerRepository,
             PasswordEncoder passwordEncoder,
@@ -64,24 +64,6 @@ public class CustomerService {
         this.transactionTemplate = transactionTemplate;
     }
 
-
-    /**
-     * Registers a customer. Built for heavy sign-up traffic:
-     *
-     * - The password is hashed first, outside any transaction. BCrypt is
-     *   deliberately slow CPU work, and inside a transaction it would keep
-     *   a pooled database connection idle for the whole hash, capping
-     *   registrations at pool size / hash time.
-     * - Duplicate email or phone is detected by the unique constraints, not
-     *   by "does it exist?" queries first: fewer round trips, and two
-     *   concurrent sign-ups with the same email get a clean 409 instead of
-     *   racing past the check.
-     * - Everything else (customer, role, identity, KYC profile) is written
-     *   in one short transaction.
-     *
-     * Not @Transactional: the transaction is opened explicitly after
-     * hashing.
-     */
     public CustomerResponse register(
             RegisterCustomerRequest request
     ) {
@@ -134,13 +116,9 @@ public class CustomerService {
                 phoneNumber
         );
 
-        // Flush first so a duplicate email or phone fails here, before the
-        // role, identity and KYC rows are written.
         Customer savedCustomer =
                 customerRepository.saveAndFlush(customer);
 
-        // Public registration always gets CUSTOMER; the client never
-        // chooses a role. performedBy is null because the system assigns it.
         roleAssignmentService.assignRole(
                 savedCustomer,
                 RoleName.CUSTOMER,
@@ -153,7 +131,6 @@ public class CustomerService {
                 passwordHash
         );
 
-        // Creates the KYC profile in this transaction.
         eventPublisher.publishEvent(
                 new CustomerRegisteredEvent(savedCustomer.getId())
         );
@@ -161,12 +138,6 @@ public class CustomerService {
         return toResponse(savedCustomer);
     }
 
-    /**
-     * A customer whose email an identity provider has already verified
-     * (sign-up with Google): active straight away, with the CUSTOMER role
-     * and a KYC profile, but no password and no phone number yet. The
-     * caller adds the sign-in identity in the same transaction.
-     */
     @Transactional
     public Customer createVerifiedCustomer(String firstName, String lastName, String email) {
 
@@ -197,11 +168,6 @@ public class CustomerService {
         return toResponse(customer);
     }
 
-
-    /**
-     * Admin list, newest first. {@code search} matches email, first or
-     * last name (case-insensitive, substring); blank lists everyone.
-     */
     @Transactional(readOnly = true)
     public CustomerPageResponse listCustomers(
             String search,
@@ -251,7 +217,6 @@ public class CustomerService {
                 PageInfo.of(customers)
         );
     }
-
 
     @Transactional
     public CustomerResponse updateProfile(
@@ -304,11 +269,8 @@ public class CustomerService {
 
                 customer.changeEmail(newEmail);
 
-                // The password identity's subject is the email; left as the
-                // old address it would block anyone registering with it.
                 identityService.changePasswordIdentitySubject(customer, newEmail);
 
-                // Unverified again: a link goes to the new address.
                 eventPublisher.publishEvent(new CustomerEmailChangedEvent(customer.getId()));
             }
         }
@@ -361,7 +323,6 @@ public class CustomerService {
 
         return toResponse(savedCustomer);
     }
-
 
     @Transactional
     public CustomerResponse suspendCustomer(
@@ -416,7 +377,6 @@ public class CustomerService {
         );
     }
 
-
     @Transactional
     public void closeCustomer(UUID customerId) {
 
@@ -441,6 +401,22 @@ public class CustomerService {
         );
     }
 
+    @Transactional(readOnly = true)
+    public void requireNotStaff(UUID customerId) {
+
+        boolean staff =
+                findCustomer(customerId)
+                        .getRoles()
+                        .stream()
+                        .map(Role::getName)
+                        .anyMatch(RoleName.STAFF::contains);
+
+        if (staff) {
+            throw new AccessDeniedException(
+                    "Staff accounts are managed by the System Admin, not from the customer desk"
+            );
+        }
+    }
 
     private Customer findCustomer(UUID customerId) {
 

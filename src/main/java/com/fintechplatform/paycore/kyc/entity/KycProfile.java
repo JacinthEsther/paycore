@@ -8,19 +8,6 @@ import jakarta.persistence.*;
 import java.time.Instant;
 import java.util.UUID;
 
-/**
- * The KYC aggregate. Its status is independent of Customer.status and
- * only changes through the transition methods below, never a setter.
- *
- * <pre>
- * NOT_STARTED -> IN_PROGRESS -> SUBMITTED -> UNDER_REVIEW
- * UNDER_REVIEW -> VERIFIED | REJECTED | ADDITIONAL_INFO_REQUIRED
- * ADDITIONAL_INFO_REQUIRED -> IN_PROGRESS
- * </pre>
- *
- * Verification results (e.g. a passed BVN check) never move the status:
- * the customer submits the package and a reviewer decides.
- */
 @Entity
 @Table(
         name = "kyc_profiles",
@@ -54,34 +41,23 @@ public class KycProfile {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
-    /**
-     * Failed BVN checks before this instant no longer count toward the
-     * retry limit. The attempts themselves are kept as history.
-     */
     @Column(name = "bvn_attempts_reset_at")
     private Instant bvnAttemptsResetAt;
 
-    /**
-     * Customer id of the admin who performed the most recent reset.
-     */
     @Column(name = "bvn_attempts_reset_by")
     private UUID bvnAttemptsResetBy;
 
-    /**
-     * Why the most recent reviewer rejected the profile or asked for more
-     * information; null after an approval. Shown to the customer.
-     */
     @Column(name = "review_reason", length = 1000)
     private String reviewReason;
 
-    /**
-     * Customer id of the reviewer who made the most recent decision.
-     */
     @Column(name = "reviewed_by")
     private UUID reviewedBy;
 
     @Column(name = "reviewed_at")
     private Instant reviewedAt;
+
+    @Column(nullable = false)
+    private short tier;
 
     protected KycProfile() {
     }
@@ -136,7 +112,7 @@ public class KycProfile {
         touch();
     }
 
-    public void approve(UUID reviewerId) {
+    public void approve(UUID reviewerId, int tier) {
 
         if (status != KycStatus.UNDER_REVIEW) {
             throw new IllegalStateException(
@@ -144,8 +120,40 @@ public class KycProfile {
             );
         }
 
+        requireTier(tier);
+
         status = KycStatus.VERIFIED;
+        this.tier = (short) tier;
         recordDecision(reviewerId, null);
+    }
+
+    public void raiseTier(int tier) {
+
+        if (status != KycStatus.VERIFIED) {
+            throw new IllegalStateException(
+                    "Only verified KYC can move up a tier, not " + status
+            );
+        }
+
+        requireTier(tier);
+
+        if (tier > this.tier) {
+            this.tier = (short) tier;
+            touch();
+        }
+    }
+
+    public void verifyForSeededAccount(int tier) {
+        requireTier(tier);
+        status = KycStatus.VERIFIED;
+        this.tier = (short) tier;
+        touch();
+    }
+
+    private static void requireTier(int tier) {
+        if (tier < 1 || tier > 3) {
+            throw new IllegalArgumentException("Tier must be 1, 2 or 3");
+        }
     }
 
     public void reject(UUID reviewerId, String reason) {
@@ -181,10 +189,6 @@ public class KycProfile {
         return status == KycStatus.IN_PROGRESS;
     }
 
-    /**
-     * Gives the customer a fresh set of BVN attempts. Only meaningful
-     * while the customer can still run BVN checks.
-     */
     public void resetBvnAttempts(UUID adminId) {
 
         if (status != KycStatus.NOT_STARTED
@@ -222,6 +226,10 @@ public class KycProfile {
 
     public KycStatus getStatus() {
         return status;
+    }
+
+    public int getTier() {
+        return tier;
     }
 
     public Instant getCreatedAt() {

@@ -7,7 +7,10 @@ import com.fintechplatform.paycore.banktransfer.config.RailProperties;
 import com.fintechplatform.paycore.banktransfer.dto.SimulatedInboundRequest;
 import com.fintechplatform.paycore.banktransfer.dto.TestBankAccountResponse;
 import com.fintechplatform.paycore.banktransfer.exception.SimulatorLimitExceededException;
+import com.fintechplatform.paycore.banktransfer.exception.InboundNotificationLostException;
 import com.fintechplatform.paycore.banktransfer.rail.SessionIds;
+import com.fintechplatform.paycore.banktransfer.service.BankTransferService;
+import com.fintechplatform.paycore.banktransfer.simulator.RailSessionRecords.RailSession;
 import com.fintechplatform.paycore.ledger.domain.Counterparty;
 import com.fintechplatform.paycore.ledger.domain.Currency;
 import com.fintechplatform.paycore.ledger.domain.Money;
@@ -18,44 +21,35 @@ import com.fintechplatform.paycore.ledger.service.LedgerService;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.util.UUID;
 
-/**
- * Test Bank's side of an inbound transfer: the signed-in customer sends
- * money from their own Test Bank account, in their own name, to a PayCore
- * account. It reaches the ledger exactly the way a real bank's transfer
- * would, as an inbound rail notification with a session id: PayCore does
- * not treat it any differently.
- *
- * Because the money is pretend, Test Bank sends at most a fixed total to
- * any one PayCore account. That cap belongs to the simulator; PayCore
- * itself never refuses a real inbound transfer for being large.
- */
 @Service
 @ConditionalOnProperty(name = "paycore.rails.provider", havingValue = "simulated")
 public class TestBankSimulator {
+
+    public static final long NOTIFICATION_LOST_MINOR_ENDING = 95;
 
     private final TestBank testBank;
     private final LedgerService ledgerService;
     private final AccountRepository accountRepository;
     private final RailProperties properties;
+    private final RailSessionRecords sessions;
 
     public TestBankSimulator(
             TestBank testBank,
             LedgerService ledgerService,
             AccountRepository accountRepository,
-            RailProperties properties
+            RailProperties properties,
+            RailSessionRecords sessions
     ) {
         this.testBank = testBank;
         this.ledgerService = ledgerService;
         this.accountRepository = accountRepository;
         this.properties = properties;
+        this.sessions = sessions;
     }
 
-    /**
-     * The customer's Test Bank account, and how much more it may send to
-     * their PayCore account (accountId, which must be theirs).
-     */
     public TestBankAccountResponse account(UUID customerId, UUID accountId) {
 
         Account account =
@@ -94,18 +88,37 @@ public class TestBankSimulator {
         }
 
         String senderName = testBank.holderNameFor(customerId).orElse("Test Bank customer");
+        String sessionId = SessionIds.next(TestBank.BANK.code());
 
-        return ledgerService.receiveInboundTransfer(
-                new InboundTransfer(
-                        SimulatedBankRail.PROVIDER_NAME,
-                        SessionIds.next(TestBank.BANK.code()),
-                        destination.getAccountNumber(),
-                        request.amount(),
-                        currency.code(),
-                        new Counterparty(senderName, TestBank.BANK.name(), testBank.accountNumberFor(customerId)),
-                        request.narration()
-                )
-        );
+        String senderAccount = testBank.accountNumberFor(customerId);
+        boolean notificationLost = amount.amountMinor() % 100 == NOTIFICATION_LOST_MINOR_ENDING;
+
+        sessions.saveIfAbsent(new RailSession(
+                sessionId, "INBOUND", BankTransferService.PAYCORE.code(), destination.getAccountNumber(), null,
+                amount.amountMinor(), currency.code(), request.narration(), "SUCCESSFUL", null,
+                senderName, TestBank.BANK.name(), senderAccount, !notificationLost, Instant.now()
+        ));
+
+        if (notificationLost) {
+            throw new InboundNotificationLostException(sessionId);
+        }
+
+        try {
+            return ledgerService.receiveInboundTransfer(
+                    new InboundTransfer(
+                            SimulatedBankRail.PROVIDER_NAME,
+                            sessionId,
+                            destination.getAccountNumber(),
+                            request.amount(),
+                            currency.code(),
+                            new Counterparty(senderName, TestBank.BANK.name(), senderAccount),
+                            request.narration()
+                    )
+            );
+        } catch (InboundTransferRejectedException exception) {
+            sessions.markReturned(sessionId, exception.getMessage());
+            throw exception;
+        }
     }
 
     private Money sentTo(Account account, Currency currency) {

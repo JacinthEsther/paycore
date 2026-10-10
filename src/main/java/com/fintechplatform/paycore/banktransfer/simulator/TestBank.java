@@ -13,15 +13,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-/**
- * A pretend bank on the other side of the simulated rail. Every PayCore
- * customer has an account there in their own name, so they can send
- * themselves money "from another bank" and send money back out to it.
- * Any other 10-digit number belongs to a made-up Test Bank customer,
- * except numbers starting 000, which do not exist.
- *
- * No real bank, account or money is involved.
- */
 @Component
 @ConditionalOnProperty(name = "paycore.rails.provider", havingValue = "simulated")
 public class TestBank {
@@ -39,10 +30,6 @@ public class TestBank {
         this.customerRepository = customerRepository;
     }
 
-    /**
-     * The customer's own Test Bank account number: stable, derived from
-     * their customer id, always starting with 7.
-     */
     public String accountNumberFor(UUID customerId) {
         return "7" + digits(customerId.toString(), 9);
     }
@@ -54,10 +41,6 @@ public class TestBank {
                 .map(TestBank::fullName);
     }
 
-    /**
-     * Who holds the account: the asking customer if it is their own,
-     * otherwise a made-up holder; empty for numbers starting 000.
-     */
     public Optional<String> holderOf(String accountNumber, UUID askingCustomerId) {
 
         if (accountNumber == null || !accountNumber.matches("\\d{10}") || accountNumber.startsWith("000")) {
@@ -76,7 +59,6 @@ public class TestBank {
         return customer.getFirstName() + " " + customer.getLastName();
     }
 
-    /** count decimal digits taken from SHA-256 of the input. */
     private static String digits(String input, int count) {
 
         try {

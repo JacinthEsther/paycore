@@ -8,12 +8,6 @@ import { typeLabel } from '../../components/TransactionList';
 import { accountLabel, Card, Field, formatAccountNumber, formatDate, formatMoney, humanize, Notice, StatusBadge } from '../../components/ui';
 import { markDone } from '../../journey';
 
-/**
- * Staff view of the ledger: what PayCore holds, and any transaction by
- * reference with its internal note. Staff cannot move money here; an
- * operations officer can only request a reversal, which a second officer
- * must approve.
- */
 export function Ledger() {
   const [params, setParams] = useSearchParams();
   const reference = params.get('ref') ?? '';
@@ -21,8 +15,7 @@ export function Ledger() {
   return (
     <>
       <ScreenTitle title="Transactions">
-        Every movement is a debit and an equal credit. Posted entries are never edited: a mistake is undone by a new
-        reversal transaction, and only after two operations officers agree.
+        Find any transaction by its reference. Mistakes are undone by a reversal, never an edit.
       </ScreenTitle>
 
       <div className="grid-2">
@@ -211,8 +204,8 @@ function TransactionDetail({ reference }: { reference: string }) {
       ) : (
         <Card title="Reverse">
           <p className="muted small">
-            Only operations officers can request a reversal, and another officer has to approve it. Admins manage
-            customers and compliance, not money.
+            Only an Operations Officer can request a reversal, and only a Supervisor can approve it. Support and
+            Compliance can see transactions but not move money.
           </p>
         </Card>
       )}

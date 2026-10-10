@@ -8,17 +8,6 @@ import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
 
-/**
- * A transfer from one of the caller's accounts (in the path) to any
- * PayCore account, identified the way a sender knows it: by its 10-digit
- * account number.
- *
- * The amount is in major units as people write it (20000.50); the ledger
- * converts it to minor units exactly and rejects extra decimal places.
- *
- * Retrying with the same idempotency key and the same details returns the
- * original transaction instead of moving the money again.
- */
 public record TransferRequest(
 
         @NotBlank(message = "Destination account number is required")

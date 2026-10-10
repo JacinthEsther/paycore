@@ -7,19 +7,12 @@ import java.time.Duration;
 @ConfigurationProperties(prefix = "paycore.email-verification")
 public class EmailVerificationProperties {
 
-    /**
-     * Where the web app runs: verification links point to
-     * {publicUrl}/verify-email?token=...
-     */
     private String publicUrl = "http://localhost:5173";
 
-    /** How long a link works. */
     private Duration tokenTtl = Duration.ofHours(24);
 
-    /** Minimum wait between two links for the same customer. */
     private Duration resendCooldown = Duration.ofSeconds(60);
 
-    /** Most links one customer can be sent in 24 hours. */
     private int maxPerDay = 5;
 
     public String getPublicUrl() {

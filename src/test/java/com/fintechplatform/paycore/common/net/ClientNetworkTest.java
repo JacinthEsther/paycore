@@ -46,9 +46,6 @@ class ClientNetworkTest {
     @Test
     void shouldNeverResolveHostnames() {
 
-        // Each of these would trigger a DNS lookup if passed to
-        // InetAddress.getByName; a slow or failing lookup would show up
-        // as a long runtime. They must be rejected before parsing.
         long start = System.nanoTime();
 
         for (String input : new String[]{
@@ -78,8 +75,6 @@ class ClientNetworkTest {
     })
     void shouldMapMissingOrInvalidInputToUnknown(String input) {
 
-        // Hostnames are never resolved; everything unparseable shares one
-        // bucket, which is still rate limited.
         assertThat(ClientNetwork.key(input)).isEqualTo(ClientNetwork.UNKNOWN);
     }
 }

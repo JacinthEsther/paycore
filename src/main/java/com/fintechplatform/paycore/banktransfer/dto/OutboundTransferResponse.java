@@ -2,23 +2,19 @@ package com.fintechplatform.paycore.banktransfer.dto;
 
 import com.fasterxml.jackson.annotation.JsonUnwrapped;
 import com.fintechplatform.paycore.ledger.dto.response.TransactionResponse;
+import com.fintechplatform.paycore.payment.enums.PaymentStatus;
 
-/**
- * The debit for a transfer to another bank, flattened into the same JSON
- * object, plus what happened on the rail:
- *
- * <pre>
- * SUCCESSFUL  the beneficiary bank accepted the payment
- * FAILED      it was rejected; the debit was reversed (reversalReference)
- * PENDING     the outcome is not known yet; the debit stands until it is
- * </pre>
- */
+import java.util.UUID;
+
 public record OutboundTransferResponse(
         @JsonUnwrapped
         TransactionResponse transaction,
         String transferStatus,
         String failureReason,
-        String reversalReference
+        String reversalReference,
+        UUID paymentId,
+        String paymentReference,
+        PaymentStatus paymentStatus
 ) {
     public static final String SUCCESSFUL = "SUCCESSFUL";
     public static final String FAILED = "FAILED";

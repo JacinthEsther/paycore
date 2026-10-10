@@ -27,6 +27,8 @@ public class AuthenticationController {
 
     private static final String BEARER = "Bearer";
 
+    public static final String DEVICE_ID_HEADER = "X-Device-Id";
+
     private final AuthenticationService authenticationService;
     private final GoogleSignInService googleSignInService;
     private final GoogleProperties googleProperties;
@@ -53,7 +55,8 @@ public class AuthenticationController {
         AuthenticationContext context =
                 new AuthenticationContext(
                         httpRequest.getRemoteAddr(),
-                        httpRequest.getHeader("User-Agent")
+                        httpRequest.getHeader("User-Agent"),
+                        httpRequest.getHeader(DEVICE_ID_HEADER)
                 );
 
         LoginResult result =
@@ -65,10 +68,6 @@ public class AuthenticationController {
         return ResponseEntity.ok(toLoginResponse(result));
     }
 
-    /**
-     * Sign in, or sign up, with a Google ID token. The same session and
-     * tokens as a password login.
-     */
     @PostMapping("/google")
     public ResponseEntity<LoginResponse> signInWithGoogle(
             @Valid @RequestBody GoogleSignInRequest request,
@@ -78,7 +77,8 @@ public class AuthenticationController {
         AuthenticationContext context =
                 new AuthenticationContext(
                         httpRequest.getRemoteAddr(),
-                        httpRequest.getHeader("User-Agent")
+                        httpRequest.getHeader("User-Agent"),
+                        httpRequest.getHeader(DEVICE_ID_HEADER)
                 );
 
         return ResponseEntity.ok(
@@ -86,9 +86,6 @@ public class AuthenticationController {
         );
     }
 
-    /**
-     * Which sign-in methods the UI should offer.
-     */
     @GetMapping("/providers")
     public AuthProvidersResponse providers() {
 

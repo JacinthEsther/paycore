@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { api } from './client';
 import type { DemoInfo } from './types';
 
-// Fetched once per page load; null when demo mode is off on the server.
 let cached: Promise<DemoInfo | null> | null = null;
 
 export function fetchDemoInfo(): Promise<DemoInfo | null> {
@@ -10,7 +9,6 @@ export function fetchDemoInfo(): Promise<DemoInfo | null> {
   return cached;
 }
 
-/** undefined while loading, null when demo mode is off. */
 export function useDemoInfo() {
   const [info, setInfo] = useState<DemoInfo | null | undefined>(undefined);
   useEffect(() => {

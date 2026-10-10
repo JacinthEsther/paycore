@@ -8,11 +8,6 @@ import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
 
-/**
- * What the bank rail tells PayCore when another bank sends money to a
- * PayCore account. sessionId identifies the payment on the rail; the same
- * notification may be delivered more than once.
- */
 public record InboundTransferNotification(
 
         @NotBlank(message = "Session id is required")

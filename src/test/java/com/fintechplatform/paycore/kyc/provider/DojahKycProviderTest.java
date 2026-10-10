@@ -20,10 +20,6 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
-/**
- * Exercises the Dojah adapter against canned HTTP responses; it never
- * calls Dojah. See DojahSandboxIntegrationTest for the real sandbox.
- */
 class DojahKycProviderTest {
 
     private static final String BASE_URL = "https://sandbox.dojah.io";

@@ -104,8 +104,7 @@ class DemoModeIntegrationTest {
     void cleanDatabaseExceptDemoAdmin() {
 
         jdbcTemplate.execute("DELETE FROM operations_requests");
-        jdbcTemplate.execute("DELETE FROM ledger_entries");
-        jdbcTemplate.execute("DELETE FROM ledger_transactions");
+        jdbcTemplate.execute("TRUNCATE ledger_entries, ledger_transactions CASCADE");
         jdbcTemplate.execute("DELETE FROM account_status_events");
         jdbcTemplate.execute("DELETE FROM accounts");
         jdbcTemplate.execute("DELETE FROM kyc_verifications");
@@ -132,14 +131,12 @@ class DemoModeIntegrationTest {
         mockMvc.perform(get("/api/v1/demo"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.enabled").value(true))
-                .andExpect(jsonPath("$.adminEmail").value(ADMIN_EMAIL))
-                .andExpect(jsonPath("$.adminPassword").value(ADMIN_PASSWORD));
+                .andExpect(jsonPath("$.staffPassword").value(ADMIN_PASSWORD))
+                .andExpect(jsonPath("$.staff.length()").value(5))
+                .andExpect(jsonPath("$.staff[?(@.email == '" + ADMIN_EMAIL + "')].role", hasItem("ADMIN")))
+                .andExpect(jsonPath("$.staff[?(@.email == '" + DemoStaff.COMPLIANCE.email() + "')].role", hasItem("COMPLIANCE")));
     }
 
-    /**
-     * The whole walkthrough the demo UI guides visitors through, with the
-     * simulated provider and a NIN instead of a BVN.
-     */
     @Test
     void customerAndAdminShouldCompleteTheDemoJourney() throws Exception {
 
@@ -201,27 +198,27 @@ class DemoModeIntegrationTest {
                         "$.id"
                 );
 
-        String admin = accessToken(ADMIN_EMAIL, ADMIN_PASSWORD);
+        String compliance = accessToken(DemoStaff.COMPLIANCE.email(), ADMIN_PASSWORD);
 
         mockMvc.perform(
                         get("/api/v1/kyc/reviews")
                                 .param("status", "SUBMITTED")
-                                .header("Authorization", "Bearer " + admin)
+                                .header("Authorization", "Bearer " + compliance)
                 )
                 .andExpect(jsonPath("$.profiles[0].kycId").value(kycId))
                 .andExpect(jsonPath("$.profiles[0].ninPassed").value(true))
                 .andExpect(jsonPath("$.profiles[0].bvnPassed").value(false));
 
-        mockMvc.perform(post("/api/v1/kyc/{id}/start-review", kycId).header("Authorization", "Bearer " + admin))
+        mockMvc.perform(post("/api/v1/kyc/{id}/start-review", kycId).header("Authorization", "Bearer " + compliance))
                 .andExpect(status().isOk());
-        mockMvc.perform(post("/api/v1/kyc/{id}/approve", kycId).header("Authorization", "Bearer " + admin))
+        mockMvc.perform(post("/api/v1/kyc/{id}/approve", kycId).header("Authorization", "Bearer " + compliance))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("VERIFIED"));
 
         mockMvc.perform(get("/api/v1/kyc/status").header("Authorization", "Bearer " + customer))
                 .andExpect(jsonPath("$.status").value("VERIFIED"));
 
-        mockMvc.perform(get("/api/v1/kyc/{id}/nin-attempts", kycId).header("Authorization", "Bearer " + admin))
+        mockMvc.perform(get("/api/v1/kyc/{id}/nin-attempts", kycId).header("Authorization", "Bearer " + compliance))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.attempts.length()").value(1));
     }
@@ -258,7 +255,6 @@ class DemoModeIntegrationTest {
                 .andExpect(status().isTooManyRequests())
                 .andExpect(jsonPath("$.error").value("NIN_ATTEMPT_LIMIT_EXCEEDED"));
 
-        // BVN has its own allowance.
         mockMvc.perform(
                         post("/api/v1/kyc/bvn")
                                 .header("Authorization", "Bearer " + customer)
@@ -389,7 +385,6 @@ class DemoModeIntegrationTest {
                 )
                 .andExpect(status().isForbidden());
 
-        // Admin actions on anyone else still work.
         String adminToken = accessToken(ADMIN_EMAIL, ADMIN_PASSWORD);
 
         mockMvc.perform(
@@ -419,7 +414,6 @@ class DemoModeIntegrationTest {
                 "SELECT status FROM accounts WHERE account_number = ?", String.class, accountNumber
         )).isEqualTo("ACTIVE");
 
-        // Seeding again reuses the recipient and its account.
         demoRecipientSeeder.seed();
 
         assertThat(jdbcTemplate.queryForObject(
@@ -450,7 +444,7 @@ class DemoModeIntegrationTest {
                         + "WHERE e.account_id = ?::uuid AND e.event_type = 'UNFROZEN'",
                 String.class,
                 accountId
-        )).isEqualTo(ADMIN_EMAIL);
+        )).isEqualTo(DemoStaff.COMPLIANCE.email());
     }
 
     @Test
@@ -458,11 +452,11 @@ class DemoModeIntegrationTest {
 
         String visitorId = register("sender@example.com", "08011111112");
         jdbcTemplate.update(
-                "UPDATE kyc_profiles SET status = 'VERIFIED' WHERE customer_id = ?::uuid", visitorId
+                "UPDATE kyc_profiles SET status = 'VERIFIED', tier = 3 WHERE customer_id = ?::uuid", visitorId
         );
 
         String visitorToken = accessToken("sender@example.com", "Password123");
-        String adminToken = accessToken(ADMIN_EMAIL, ADMIN_PASSWORD);
+        String complianceToken = accessToken(DemoStaff.COMPLIANCE.email(), ADMIN_PASSWORD);
 
         String visitorAccount = JsonPath.read(
                 mockMvc.perform(post("/api/v1/accounts")
@@ -477,14 +471,13 @@ class DemoModeIntegrationTest {
         );
 
         mockMvc.perform(post("/api/v1/admin/accounts/{id}/activate", visitorAccount)
-                        .header("Authorization", "Bearer " + adminToken)
+                        .header("Authorization", "Bearer " + complianceToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"reason": "KYC verified"}
                                 """))
                 .andExpect(status().isOk());
 
-        // Money arrives from another bank; nobody at PayCore can type it in.
         mockMvc.perform(post("/api/v1/simulator/test-bank/transfers")
                         .header("Authorization", "Bearer " + visitorToken)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -499,9 +492,18 @@ class DemoModeIntegrationTest {
                 "$.recipientAccountNumber"
         );
 
+        mockMvc.perform(post("/api/v1/security/pin")
+                        .header("Authorization", "Bearer " + visitorToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"pin": "2580"}
+                                """))
+                .andExpect(status().isCreated());
+
         String transfer = JsonPath.read(
                 mockMvc.perform(post("/api/v1/ledger/accounts/{id}/transfers", visitorAccount)
                                 .header("Authorization", "Bearer " + visitorToken)
+                                .header("X-Transaction-PIN", "2580")
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("""
                                         {"destinationAccountNumber": "%s", "amount": 250, "currency": "NGN",
@@ -512,13 +514,12 @@ class DemoModeIntegrationTest {
                 "$.id"
         );
 
-        // Nobody can take the shared recipient out of use for everyone else.
         String recipientAccount = recipientAccountId();
         String recipientId = customerRepository.findByEmail(DemoRecipientSeeder.EMAIL).orElseThrow().getId().toString();
 
         for (String action : new String[]{"freeze", "close"}) {
             mockMvc.perform(post("/api/v1/admin/accounts/{id}/" + action, recipientAccount)
-                            .header("Authorization", "Bearer " + adminToken)
+                            .header("Authorization", "Bearer " + complianceToken)
                             .contentType(MediaType.APPLICATION_JSON)
                             .content("""
                                     {"reason": "take it down"}
@@ -528,21 +529,18 @@ class DemoModeIntegrationTest {
         }
 
         mockMvc.perform(post("/api/v1/customers/{id}/suspend", recipientId)
-                        .header("Authorization", "Bearer " + adminToken))
+                        .header("Authorization", "Bearer " + complianceToken))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error").value("DEMO_ACCOUNT_PROTECTED"));
 
-        // The admin cannot move money at all...
         mockMvc.perform(post("/api/v1/ops/requests/reversals")
-                        .header("Authorization", "Bearer " + adminToken)
+                        .header("Authorization", "Bearer " + complianceToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"transactionId": "%s", "reason": "Demo reversal"}
                                 """.formatted(transfer)))
                 .andExpect(status().isForbidden());
 
-        // ...but the two shared operations officers can reverse a transfer
-        // into the recipient: one requests, the other approves.
         String officer = accessToken(DemoStaff.OFFICER.email(), ADMIN_PASSWORD);
         String supervisor = accessToken(DemoStaff.SUPERVISOR.email(), ADMIN_PASSWORD);
 
@@ -560,17 +558,15 @@ class DemoModeIntegrationTest {
 
         mockMvc.perform(post("/api/v1/ops/requests/{id}/approve", request)
                         .header("Authorization", "Bearer " + officer))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.error").value("FOUR_EYES_REQUIRED"));
+                .andExpect(status().isForbidden());
 
         mockMvc.perform(post("/api/v1/ops/requests/{id}/approve", request)
                         .header("Authorization", "Bearer " + supervisor))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("APPROVED"));
 
-        // And freezing an ordinary customer's account is unaffected.
         mockMvc.perform(post("/api/v1/admin/accounts/{id}/freeze", visitorAccount)
-                        .header("Authorization", "Bearer " + adminToken)
+                        .header("Authorization", "Bearer " + complianceToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"reason": "ordinary freeze"}
@@ -594,7 +590,6 @@ class DemoModeIntegrationTest {
                         .andExpect(jsonPath("$[0].subject").value("Verify your PayCore email address"))
                         .andReturn().getResponse().getContentAsString();
 
-        // The link in it verifies the reader.
         String body = JsonPath.read(outbox, "$[0].body");
         String token = body.replaceAll("(?s).*verify-email\\?token=([A-Za-z0-9_-]+).*", "$1");
 
@@ -635,7 +630,7 @@ class DemoModeIntegrationTest {
     }
 
     @Test
-    void reviewQueueShouldListSubmittedProfilesForAdminsOnly() throws Exception {
+    void reviewQueueShouldListSubmittedProfilesForComplianceOnly() throws Exception {
 
         register("queue@example.com", "08011111112");
         String customerToken = accessToken("queue@example.com", "Password123");
@@ -652,25 +647,30 @@ class DemoModeIntegrationTest {
                 )
                 .andExpect(status().isForbidden());
 
-        String adminToken = accessToken(ADMIN_EMAIL, ADMIN_PASSWORD);
+        String complianceToken = accessToken(DemoStaff.COMPLIANCE.email(), ADMIN_PASSWORD);
 
-        // The demo recipient never goes through KYC, so it is listed too.
         mockMvc.perform(
                         get("/api/v1/kyc/reviews")
                                 .param("status", "NOT_STARTED")
-                                .header("Authorization", "Bearer " + adminToken)
+                                .header("Authorization", "Bearer " + complianceToken)
                 )
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.profiles.length()").value(2))
+                .andExpect(jsonPath("$.profiles.length()").value(1))
                 .andExpect(jsonPath("$.profiles[*].customerEmail", hasItem("queue@example.com")))
-                .andExpect(jsonPath("$.profiles[*].customerEmail", hasItem(DemoRecipientSeeder.EMAIL)))
                 .andExpect(jsonPath("$.profiles[?(@.customerEmail == 'queue@example.com')].bvnPassed", hasItem(false)))
-                .andExpect(jsonPath("$.page.totalElements").value(2));
+                .andExpect(jsonPath("$.page.totalElements").value(1));
+
+        mockMvc.perform(
+                        get("/api/v1/kyc/reviews")
+                                .param("status", "VERIFIED")
+                                .header("Authorization", "Bearer " + complianceToken)
+                )
+                .andExpect(jsonPath("$.profiles[*].customerEmail", hasItem(DemoRecipientSeeder.EMAIL)));
 
         mockMvc.perform(
                         get("/api/v1/kyc/reviews")
                                 .param("status", "SUBMITTED")
-                                .header("Authorization", "Bearer " + adminToken)
+                                .header("Authorization", "Bearer " + complianceToken)
                 )
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.profiles.length()").value(0));
@@ -678,7 +678,7 @@ class DemoModeIntegrationTest {
         mockMvc.perform(
                         get("/api/v1/admin/customers")
                                 .param("search", "QUEUE@")
-                                .header("Authorization", "Bearer " + adminToken)
+                                .header("Authorization", "Bearer " + complianceToken)
                 )
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.customers.length()").value(1))
@@ -728,6 +728,154 @@ class DemoModeIntegrationTest {
         );
     }
 
+    @Test
+    void eachDemoStaffMemberShouldHoldExactlyTheirOwnDesk() {
+
+        transactionTemplate.executeWithoutResult(status -> {
+            for (DemoStaff staff : DemoStaff.ALL) {
+                assertThat(customerRepository.findByEmail(staff.email()).orElseThrow().getRoles())
+                        .extracting(role -> role.getName())
+                        .containsExactly(staff.role());
+            }
+
+            assertThat(customerRepository.findByEmail(ADMIN_EMAIL).orElseThrow().getRoles())
+                    .extracting(role -> role.getName())
+                    .containsExactlyInAnyOrder(RoleName.ADMIN, RoleName.CUSTOMER);
+        });
+    }
+
+    @Test
+    void kycScenarioShouldPutARealApplicationWithAViewableDocumentInTheComplianceQueue() throws Exception {
+
+        String compliance = accessToken(DemoStaff.COMPLIANCE.email(), ADMIN_PASSWORD);
+        String support = accessToken(DemoStaff.SUPPORT.email(), ADMIN_PASSWORD);
+
+        String created =
+                mockMvc.perform(post("/api/v1/demo/scenarios/kyc-review").header("Authorization", "Bearer " + support))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.accountNumber", matchesPattern("\\d{10}")))
+                        .andReturn().getResponse().getContentAsString();
+
+        String email = JsonPath.read(created, "$.customerEmail");
+
+        String queue =
+                mockMvc.perform(
+                                get("/api/v1/kyc/reviews")
+                                        .param("status", "SUBMITTED")
+                                        .header("Authorization", "Bearer " + compliance)
+                        )
+                        .andExpect(jsonPath("$.profiles[?(@.customerEmail == '" + email + "')].bvnPassed", hasItem(true)))
+                        .andReturn().getResponse().getContentAsString();
+
+        String kycId = JsonPath.<java.util.List<String>>read(
+                queue, "$.profiles[?(@.customerEmail == '" + email + "')].kycId").get(0);
+
+        String documents =
+                mockMvc.perform(get("/api/v1/kyc/{id}/documents", kycId).header("Authorization", "Bearer " + compliance))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$[0].documentType").value("NATIONAL_ID"))
+                        .andReturn().getResponse().getContentAsString();
+
+        String documentId = JsonPath.read(documents, "$[0].id");
+
+        byte[] pdf =
+                mockMvc.perform(
+                                get("/api/v1/kyc/documents/{id}/content", documentId)
+                                        .header("Authorization", "Bearer " + compliance)
+                        )
+                        .andExpect(status().isOk())
+                        .andExpect(header().string("Content-Type", "application/pdf"))
+                        .andReturn().getResponse().getContentAsByteArray();
+
+        assertThat(new String(pdf, 0, 5, java.nio.charset.StandardCharsets.ISO_8859_1)).isEqualTo("%PDF-");
+
+        mockMvc.perform(
+                        get("/api/v1/kyc/documents/{id}/content", documentId)
+                                .header("Authorization", "Bearer " + support)
+                )
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void stuckTransferScenarioShouldLeaveAnUnknownPaymentForOperations() throws Exception {
+
+        String officer = accessToken(DemoStaff.OFFICER.email(), ADMIN_PASSWORD);
+
+        String created =
+                mockMvc.perform(post("/api/v1/demo/scenarios/stuck-transfer").header("Authorization", "Bearer " + officer))
+                        .andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString();
+
+        String reference = JsonPath.read(created, "$.reference");
+
+        mockMvc.perform(
+                        get("/api/v1/admin/payments")
+                                .param("status", "UNKNOWN")
+                                .header("Authorization", "Bearer " + officer)
+                )
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.payments[*].reference", hasItem(reference)));
+    }
+
+    @Test
+    void customerEnquiryScenarioShouldGiveSupportASucceededPaymentToExplain() throws Exception {
+
+        String support = accessToken(DemoStaff.SUPPORT.email(), ADMIN_PASSWORD);
+
+        String created =
+                mockMvc.perform(post("/api/v1/demo/scenarios/customer-enquiry").header("Authorization", "Bearer " + support))
+                        .andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString();
+
+        String reference = JsonPath.read(created, "$.reference");
+
+        mockMvc.perform(get("/api/v1/admin/payments").param("status", "SUCCEEDED").header("Authorization", "Bearer " + support))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.payments[*].reference", hasItem(reference)));
+    }
+
+    @Test
+    void reconciliationDayShouldGiveTheOfficerEveryKindOfBankBreak() throws Exception {
+
+        String officer = accessToken(DemoStaff.OFFICER.email(), ADMIN_PASSWORD);
+
+        mockMvc.perform(post("/api/v1/demo/scenarios/reconciliation-day").header("Authorization", "Bearer " + officer))
+                .andExpect(status().isOk());
+
+        String today = java.time.LocalDate.now(java.time.ZoneId.of("Africa/Lagos")).toString();
+
+        String run =
+                mockMvc.perform(post("/api/v1/ops/reconciliation/runs")
+                                .header("Authorization", "Bearer " + officer)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"provider\": \"BANK_RAIL\", \"businessDate\": \"" + today + "\"}"))
+                        .andExpect(status().isCreated())
+                        .andReturn().getResponse().getContentAsString();
+
+        mockMvc.perform(get("/api/v1/ops/reconciliation/runs/{id}", (String) JsonPath.read(run, "$.id"))
+                        .header("Authorization", "Bearer " + officer))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$..result", hasItem("MISSING_LOCAL")))
+                .andExpect(jsonPath("$..result", hasItem("STATUS_MISMATCH")))
+                .andExpect(jsonPath("$..result", hasItem("MATCHED")));
+    }
+
+    @Test
+    void customersShouldNotCreateScenariosAndUnknownOnesShouldBeRefused() throws Exception {
+
+        register("curious@example.com", "08011111113");
+        String customer = accessToken("curious@example.com", "Password123");
+
+        mockMvc.perform(post("/api/v1/demo/scenarios/kyc-review").header("Authorization", "Bearer " + customer))
+                .andExpect(status().isForbidden());
+
+        String support = accessToken(DemoStaff.SUPPORT.email(), ADMIN_PASSWORD);
+
+        mockMvc.perform(post("/api/v1/demo/scenarios/rob-the-bank").header("Authorization", "Bearer " + support))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").value("UNKNOWN_SCENARIO"));
+    }
+
     private String accessToken(String email, String password) throws Exception {
 
         return JsonPath.read(loginResponse(email, password), "$.accessToken");
@@ -737,6 +885,7 @@ class DemoModeIntegrationTest {
 
         return mockMvc.perform(
                         post("/api/v1/auth/login")
+                                .header("X-Device-Id", "integration-test-device")
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("""
                                         {

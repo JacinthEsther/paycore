@@ -147,7 +147,6 @@ class KycVerificationRepositoryIntegrationTest {
             kycVerificationRepository.saveAndFlush(attempt);
         }
 
-        // Other verification types are not part of BVN history.
         kycVerificationRepository.saveAndFlush(
                 attempt(KycVerificationType.NIN, VerificationResult.FAILED)
         );
@@ -183,7 +182,6 @@ class KycVerificationRepositoryIntegrationTest {
         assertThat(last.getContent()).hasSize(1);
         assertThat(last.hasNext()).isFalse();
 
-        // The last page holds the oldest attempt.
         assertThat(last.getContent().getFirst().getCreatedAt())
                 .isBefore(first.getContent().getLast().getCreatedAt());
     }
@@ -207,7 +205,6 @@ class KycVerificationRepositoryIntegrationTest {
 
         String network = "203.0.113.7";
 
-        // Two customers, same network, any result: all count.
         kycVerificationRepository.saveAndFlush(KycVerification.create(
                 profile, KycVerificationType.BVN, "DOJAH", null,
                 VerificationResult.FAILED, null, network));
@@ -215,7 +212,6 @@ class KycVerificationRepositoryIntegrationTest {
                 otherProfile, KycVerificationType.BVN, "DOJAH", null,
                 VerificationResult.PASSED, null, network));
 
-        // Excluded: too old, another network, another verification type.
         KycVerification old = KycVerification.create(
                 profile, KycVerificationType.BVN, "DOJAH", null,
                 VerificationResult.FAILED, null, network);
@@ -248,7 +244,6 @@ class KycVerificationRepositoryIntegrationTest {
     @Test
     void shouldTakeNetworkAdvisoryLockInsideTransaction() {
 
-        // Re-entrant within the same transaction; released at rollback.
         assertThat(kycVerificationRepository.lockClientNetwork("203.0.113.7"))
                 .isEqualTo(1);
         assertThat(kycVerificationRepository.lockClientNetwork("203.0.113.7"))

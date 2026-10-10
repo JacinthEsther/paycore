@@ -6,6 +6,7 @@ import com.fintechplatform.paycore.banktransfer.dto.NameEnquiryResponse;
 import com.fintechplatform.paycore.banktransfer.dto.OutboundTransferRequest;
 import com.fintechplatform.paycore.banktransfer.dto.OutboundTransferResponse;
 import com.fintechplatform.paycore.banktransfer.service.BankTransferService;
+import com.fintechplatform.paycore.pin.service.TransactionAuthorizationService;
 import com.fintechplatform.paycore.security.CurrentUser;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -17,28 +18,27 @@ import java.net.URI;
 import java.util.List;
 import java.util.UUID;
 
-/**
- * Banks a customer can pay, who holds an account (name enquiry), and
- * transfers to other banks from the caller's own accounts.
- */
 @RestController
 @RequestMapping("/api/v1")
 public class BankTransferController {
 
     private final BankTransferService bankTransferService;
+    private final TransactionAuthorizationService transactionAuthorization;
 
-    public BankTransferController(BankTransferService bankTransferService) {
+    public BankTransferController(
+            BankTransferService bankTransferService,
+            TransactionAuthorizationService transactionAuthorization
+    ) {
         this.bankTransferService = bankTransferService;
+        this.transactionAuthorization = transactionAuthorization;
     }
 
-    /** PayCore first, then every bank the rail reaches. */
     @GetMapping("/banks")
     @PreAuthorize("hasAuthority('TRANSACTION_CREATE')")
     public List<BankResponse> banks() {
         return bankTransferService.banks();
     }
 
-    /** 422 BENEFICIARY_NOT_FOUND if the bank has no such account. */
     @PostMapping("/banks/name-enquiry")
     @PreAuthorize("hasAuthority('TRANSACTION_CREATE')")
     public NameEnquiryResponse nameEnquiry(
@@ -48,18 +48,16 @@ public class BankTransferController {
         return bankTransferService.nameEnquiry(currentUser.customerId(), request.bankCode(), request.accountNumber());
     }
 
-    /**
-     * 201 with the debit and the rail's verdict. A rejected transfer is
-     * still 201: the debit happened and was reversed, and transferStatus
-     * says FAILED.
-     */
     @PostMapping("/ledger/accounts/{sourceAccountId}/bank-transfers")
     @PreAuthorize("hasAuthority('TRANSACTION_CREATE')")
     public ResponseEntity<OutboundTransferResponse> send(
             @AuthenticationPrincipal CurrentUser currentUser,
             @PathVariable UUID sourceAccountId,
-            @Valid @RequestBody OutboundTransferRequest request
+            @Valid @RequestBody OutboundTransferRequest request,
+            @RequestHeader(name = TransactionAuthorizationService.PIN_HEADER, required = false) String pin
     ) {
+
+        transactionAuthorization.authorize(currentUser, pin);
 
         OutboundTransferResponse transfer =
                 bankTransferService.send(currentUser.customerId(), sourceAccountId, request);

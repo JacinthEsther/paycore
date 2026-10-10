@@ -35,6 +35,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -121,7 +122,6 @@ class SecurityIntegrationTest {
     @Test
     void shouldNotApplyCorsWhenNoOriginsAreConfigured() throws Exception {
 
-        // A dev proxy forwards the browser's Origin header to another host.
         register("proxied@example.com", "08011111119", "http://localhost:5173");
     }
 
@@ -228,6 +228,39 @@ class SecurityIntegrationTest {
     }
 
     @Test
+    void supportShouldEditCustomersButNotStaffAccounts() throws Exception {
+
+        String customerId = register("caller@example.com", "08011111131");
+        String colleagueId = register("colleague@example.com", "08011111132");
+        String supportId = register("helpdesk@example.com", "08011111133");
+
+        grantRole(UUID.fromString(colleagueId), RoleName.ADMIN);
+        grantRole(UUID.fromString(supportId), RoleName.SUPPORT);
+
+        String accessToken = login("helpdesk@example.com");
+
+        mockMvc.perform(
+                        patch("/api/v1/customers/{id}", customerId)
+                                .header("Authorization", "Bearer " + accessToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"countryCode": "NG", "phoneNumber": "08099999999"}
+                                        """)
+                )
+                .andExpect(status().isOk());
+
+        mockMvc.perform(
+                        patch("/api/v1/customers/{id}", colleagueId)
+                                .header("Authorization", "Bearer " + accessToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"email": "takeover@example.com"}
+                                        """)
+                )
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void customerShouldBeAllowedToStartOwnKyc() throws Exception {
 
         register("kyc@example.com", "08011111121");
@@ -273,9 +306,6 @@ class SecurityIntegrationTest {
 
         Instant now = Instant.now();
 
-        // Signed with the real key for a live session, so expiry is the only
-        // thing wrong. Ten minutes is well past the decoder's 60 second
-        // clock skew.
         String expired =
                 signedAccessToken(
                         customerId,
@@ -325,7 +355,6 @@ class SecurityIntegrationTest {
                 )
                 .andExpect(status().isNoContent());
 
-        // Every session's access token stops working at once.
         getOwnProfile(accessToken).andExpect(status().isUnauthorized());
         getOwnProfile(otherDeviceToken).andExpect(status().isUnauthorized());
     }
@@ -373,7 +402,7 @@ class SecurityIntegrationTest {
     void suspendedCustomerShouldLoseAccessWithTheirExistingSession() throws Exception {
 
         String customerId = registerActive("suspend-me@example.com", "08011111124");
-        String adminToken = loginAsNewAdmin("suspender@example.com", "08011111125");
+        String adminToken = loginAsNewComplianceOfficer("suspender@example.com", "08011111125");
 
         String loginResponse = loginResponse("suspend-me@example.com");
         String accessToken = JsonPath.read(loginResponse, "$.accessToken");
@@ -387,7 +416,6 @@ class SecurityIntegrationTest {
                 )
                 .andExpect(status().isOk());
 
-        // The access token is still signed and unexpired, but no longer works.
         getOwnProfile(accessToken).andExpect(status().isUnauthorized());
 
         refresh(refreshToken).andExpect(status().isUnauthorized());
@@ -399,7 +427,7 @@ class SecurityIntegrationTest {
     void reactivatedCustomerShouldHaveToSignInAgain() throws Exception {
 
         String customerId = registerActive("comeback@example.com", "08011111126");
-        String adminToken = loginAsNewAdmin("reactivator@example.com", "08011111127");
+        String adminToken = loginAsNewComplianceOfficer("reactivator@example.com", "08011111127");
 
         String refreshToken =
                 JsonPath.read(loginResponse("comeback@example.com"), "$.refreshToken");
@@ -416,7 +444,6 @@ class SecurityIntegrationTest {
                 )
                 .andExpect(status().isOk());
 
-        // Sessions ended at suspension stay ended after reactivation.
         refresh(refreshToken).andExpect(status().isUnauthorized());
 
         getOwnProfile(login("comeback@example.com")).andExpect(status().isOk());
@@ -426,7 +453,7 @@ class SecurityIntegrationTest {
     void closedCustomerShouldLoseAccessWithTheirExistingSession() throws Exception {
 
         String customerId = registerActive("close-me@example.com", "08011111128");
-        String adminToken = loginAsNewAdmin("closer@example.com", "08011111129");
+        String adminToken = loginAsNewComplianceOfficer("closer@example.com", "08011111129");
 
         String accessToken = login("close-me@example.com");
 
@@ -453,11 +480,11 @@ class SecurityIntegrationTest {
         return customerId;
     }
 
-    private String loginAsNewAdmin(String email, String phone) throws Exception {
+    private String loginAsNewComplianceOfficer(String email, String phone) throws Exception {
 
-        String adminId = register(email, phone);
+        String officerId = register(email, phone);
 
-        grantRole(UUID.fromString(adminId), RoleName.ADMIN);
+        grantRole(UUID.fromString(officerId), RoleName.COMPLIANCE);
 
         return login(email);
     }

@@ -1,5 +1,3 @@
-// Mirrors the Spring Boot DTOs. Instants arrive as ISO-8601 strings.
-
 export type CustomerStatus = 'PENDING_VERIFICATION' | 'ACTIVE' | 'SUSPENDED' | 'CLOSED';
 
 export type KycStatus =
@@ -24,8 +22,35 @@ export interface ApiErrorBody {
   message?: string;
   missing?: string[];
   retryAfter?: string;
-  /** On PAYMENT_DECLINED: the provider's reference for the declined payment. */
   providerReference?: string;
+  attemptsRemaining?: number;
+  limit?: string;
+  remaining?: number;
+  resetsAt?: string;
+}
+
+export type DeviceStatus = 'PENDING' | 'TRUSTED' | 'REVOKED';
+
+export interface Device {
+  id: string;
+  label: string | null;
+  status: DeviceStatus;
+  current: boolean;
+  createdAt: string;
+  lastSeenAt: string;
+  trustedAt: string | null;
+  coolingOffUntil: string | null;
+}
+
+export interface PinStatus {
+  set: boolean;
+  locked: boolean;
+  attemptsRemaining: number;
+}
+
+export interface CodeSent {
+  sentTo: string;
+  expiresAt: string;
 }
 
 export interface LoginResponse {
@@ -173,24 +198,36 @@ export interface RoleEvent {
 export interface DemoStaffInfo {
   email: string;
   name: string;
+  role: string;
+  title: string;
   duty: string;
+}
+
+export interface KycDocumentSummary {
+  id: string;
+  documentType: KycDocumentType;
+  documentNumber: string | null;
+  uploadedAt: string;
+}
+
+export interface DemoScenarioResult {
+  scenario: string;
+  customerName: string;
+  customerEmail: string;
+  accountNumber: string | null;
+  reference: string | null;
+  summary: string;
 }
 
 export interface DemoInfo {
   enabled: boolean;
-  adminEmail: string;
-  /** Also the password of the shared operations officers. */
-  adminPassword: string;
-  /** 'SIMULATED' or 'DOJAH' */
+  staffPassword: string;
   kycProvider: string;
-  /** A shared account visitors can send money to; null until seeded. */
   recipientName: string | null;
   recipientAccountNumber: string | null;
-  /** 'SIMULATED' when card top-ups are on; null otherwise. */
   fundingProvider: string | null;
-  /** 'SIMULATED' when transfers to and from Test Bank are on; null otherwise. */
   bankRailProvider: string | null;
-  operationsStaff: DemoStaffInfo[];
+  staff: DemoStaffInfo[];
 }
 
 export type AccountStatus = 'PENDING' | 'ACTIVE' | 'FROZEN' | 'CLOSED';
@@ -217,16 +254,12 @@ export interface AccountEvent {
   occurredAt: string;
 }
 
-// ---------------------------------------------------------------------------
-// Ledger. Amounts arrive as JSON numbers in major units (20000.5 = ₦20,000.50);
-// the backend keeps them in kobo and never rounds.
-// ---------------------------------------------------------------------------
-
 export type TransactionType =
   | 'TRANSFER'
   | 'DEPOSIT'
   | 'INBOUND_TRANSFER'
   | 'OUTBOUND_TRANSFER'
+  | 'BILL_PAYMENT'
   | 'ADJUSTMENT'
   | 'REVERSAL'
   | 'WITHDRAWAL';
@@ -243,9 +276,7 @@ export interface Balance {
 export interface LedgerEntry {
   id: string;
   accountId: string;
-  /** null for PayCore's own settlement account */
   accountNumber: string | null;
-  /** The account holder; "PayCore" for its settlement account. */
   accountName: string;
   type: EntryType;
   amount: number;
@@ -253,14 +284,12 @@ export interface LedgerEntry {
   createdAt: string;
 }
 
-/** The account at another bank on the other side of a bank transfer. */
 export interface Counterparty {
   name: string;
   bank: string;
   accountNumber: string;
 }
 
-/** What customers see. Has no staff note, by design. */
 export interface Transaction {
   id: string;
   reference: string;
@@ -270,9 +299,7 @@ export interface Transaction {
   currency: string;
   description: string | null;
   counterparty: Counterparty | null;
-  /** The card processor or bank rail that carried the money. */
   provider: string | null;
-  /** Its own reference: a payment reference or NIP session id. */
   providerReference: string | null;
   createdAt: string;
   postedAt: string | null;
@@ -281,21 +308,63 @@ export interface Transaction {
   entries: LedgerEntry[];
 }
 
-/** What staff see: the same, plus the internal note, who initiated and who approved. */
 export interface StaffTransaction extends Transaction {
   staffNote: string | null;
   initiatedBy: string | null;
   approvedBy: string | null;
 }
 
-/** A transfer to another bank, with the rail's verdict. */
 export interface OutboundTransfer extends Transaction {
   transferStatus: 'SUCCESSFUL' | 'FAILED' | 'PENDING';
   failureReason: string | null;
   reversalReference: string | null;
+  paymentId: string;
+  paymentReference: string;
+  paymentStatus: PaymentStatus;
 }
 
-/** How much more can be added to an account by card. */
+export type PaymentStatus = 'CREATED' | 'PROCESSING' | 'UNKNOWN' | 'NEEDS_REVIEW' | 'SUCCEEDED' | 'FAILED';
+
+export interface Payment {
+  id: string;
+  reference: string;
+  type: 'OUTBOUND_TRANSFER' | 'CARD_FUNDING' | 'BILL_PAYMENT';
+  status: PaymentStatus;
+  accountId: string;
+  amount: number;
+  currency: string;
+  provider: string;
+  externalReference: string;
+  providerReference: string | null;
+  narration: string | null;
+  counterparty: Counterparty | null;
+  ledgerTransactionId: string | null;
+  reversalTransactionId: string | null;
+  failureReason: string | null;
+  refundReference: string | null;
+  statusChecks: number;
+  nextCheckAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  bill: { billerId: string; productCode: string | null; productName: string | null; token: string | null } | null;
+}
+
+export interface PaymentEvent {
+  fromStatus: PaymentStatus | null;
+  toStatus: PaymentStatus;
+  statusChecks: number;
+  failureReason: string | null;
+  at: string;
+}
+
+export interface PaymentPage {
+  payments: Payment[];
+  page: { number: number; size: number; totalElements: number; totalPages: number; hasNext: boolean };
+}
+
+export type PaymentResolution = 'COMPLETE' | 'REVERSE' | 'CREDIT' | 'REFUND' | 'CLOSE';
+
 export interface FundingAllowance {
   accountId: string;
   enabled: boolean;
@@ -318,7 +387,6 @@ export interface NameEnquiry {
   accountName: string;
 }
 
-/** The customer's own (pretend) account at Test Bank. */
 export interface TestBankAccount {
   bankCode: string;
   bankName: string;
@@ -365,13 +433,9 @@ export interface SystemAccount {
   balance: number;
 }
 
-// ---------------------------------------------------------------------------
-// Operations: maker-checker corrections.
-// ---------------------------------------------------------------------------
-
 export interface OpsRequest {
   id: string;
-  type: 'ADJUSTMENT' | 'REVERSAL';
+  type: 'ADJUSTMENT' | 'REVERSAL' | 'PAYMENT_RESOLUTION';
   status: 'PENDING' | 'APPROVED' | 'REJECTED';
   accountId: string | null;
   accountNumber: string | null;
@@ -393,5 +457,136 @@ export interface OpsRequest {
   decisionNote: string | null;
   resultTransactionId: string | null;
   resultReference: string | null;
+  paymentId: string | null;
+  paymentReference: string | null;
+  paymentType: Payment['type'] | null;
+  resolution: PaymentResolution | null;
 }
 
+export type ReconciliationResult = 'MATCHED' | 'MISSING_LOCAL' | 'MISSING_PROVIDER' | 'AMOUNT_MISMATCH' | 'STATUS_MISMATCH';
+
+export interface ReconciliationRun {
+  id: string;
+  providerKind: 'BANK_RAIL' | 'CARD';
+  provider: string;
+  businessDate: string;
+  windowStart: string;
+  windowEnd: string;
+  scheduled: boolean;
+  providerLines: number;
+  paycoreRecords: number;
+  matched: number;
+  breaks: number;
+  providerTotal: number;
+  paycoreTotal: number;
+  createdAt: string;
+}
+
+export interface ReconciliationItem {
+  id: string;
+  kind: 'OUTBOUND' | 'INBOUND' | 'CARD';
+  externalReference: string;
+  result: ReconciliationResult;
+  currency: string;
+  providerAmount: number | null;
+  providerStatus: string | null;
+  paycoreAmount: number | null;
+  paycoreStatus: string | null;
+  paymentId: string | null;
+  ledgerTransactionId: string | null;
+  accountId: string | null;
+  detail: string | null;
+  resolutionStatus: 'NOT_REQUIRED' | 'OPEN' | 'RESOLVED';
+  resolvedBy: string | null;
+  resolvedAt: string | null;
+  resolutionNote: string | null;
+}
+
+export interface ReconciliationRunDetail {
+  run: ReconciliationRun;
+  items: ReconciliationItem[];
+}
+
+export type KycTierUpgradeStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
+export interface KycTier {
+  tier: number;
+  currency: string;
+  dailySend: number;
+  sentToday: number;
+  maxBalance: number | null;
+  resetsAt: string;
+  nextTier: number | null;
+  nextTierNeeds: string[];
+  upgrade: {
+    requestedTier: number;
+    status: KycTierUpgradeStatus;
+    reason: string | null;
+    requestedAt: string;
+    decidedAt: string | null;
+    reviewDueAt: string;
+    needsCloserLook: boolean;
+    decidedAutomatically: boolean;
+  } | null;
+  tiers: { tier: number; dailySend: number; maxBalance: number | null; requirement: string }[];
+  reviewWorkingDays: number;
+}
+
+export interface KycTierUpgrade {
+  id: string;
+  kycId: string;
+  customerId: string;
+  customerName: string;
+  customerEmail: string;
+  currentTier: number;
+  requestedTier: number;
+  documentId: string;
+  documentType: KycDocumentType;
+  status: KycTierUpgradeStatus;
+  reason: string | null;
+  requestedAt: string;
+  decidedAt: string | null;
+  reviewDueAt: string;
+  flags: string[];
+  decidedAutomatically: boolean;
+}
+
+export type BillCategory = 'AIRTIME' | 'DATA' | 'ELECTRICITY' | 'TV';
+
+export interface Biller {
+  id: string;
+  name: string;
+  category: BillCategory;
+  numberLabel: string;
+  products: boolean;
+  verified: boolean;
+  meterTypes: string[] | null;
+  minAmount: number | null;
+  maxAmount: number | null;
+}
+
+export interface BillProduct {
+  code: string;
+  name: string;
+  amount: number;
+}
+
+export interface BillCustomer {
+  billerId: string;
+  customerNumber: string;
+  name: string;
+  address: string | null;
+}
+
+export interface BillPayment extends Transaction {
+  billStatus: 'SUCCESSFUL' | 'FAILED' | 'PENDING';
+  billerId: string;
+  productName: string | null;
+  customerNumber: string;
+  token: string | null;
+  failureReason: string | null;
+  reversalReference: string | null;
+  paymentId: string;
+  paymentReference: string;
+  paymentStatus: PaymentStatus;
+}

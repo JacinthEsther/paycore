@@ -7,11 +7,6 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Calls the real (free) Dojah Sandbox with its documented test BVN.
- * Skipped unless DOJAH_APP_ID and DOJAH_SECRET_KEY are set, so normal
- * builds never touch the network.
- */
 @EnabledIfEnvironmentVariable(named = "DOJAH_APP_ID", matches = ".+")
 @EnabledIfEnvironmentVariable(named = "DOJAH_SECRET_KEY", matches = ".+")
 class DojahSandboxIntegrationTest {
@@ -44,7 +39,6 @@ class DojahSandboxIntegrationTest {
                         )
                 );
 
-        // Sandbox data is mock data, so only assert we got a real verdict.
         assertThat(result.provider()).isEqualTo("DOJAH");
         assertThat(result.result())
                 .isIn(VerificationResult.PASSED, VerificationResult.FAILED);

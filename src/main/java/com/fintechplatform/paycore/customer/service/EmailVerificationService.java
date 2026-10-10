@@ -26,14 +26,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 
-/**
- * Proves a customer owns their email address, and activates a new customer
- * once they do (PENDING_VERIFICATION -> ACTIVE).
- *
- * A link holds a 256-bit random token; only its SHA-256 hash is stored. It
- * works once, for 24 hours, only for the address it was sent to, and only
- * while it is the customer's newest link.
- */
 @Service
 public class EmailVerificationService {
 
@@ -64,11 +56,6 @@ public class EmailVerificationService {
         this.properties = properties;
     }
 
-    /**
-     * Sends a link after registration or an email change, unless the
-     * address is already verified (e.g. a seeded demo customer). Runs in
-     * its own transaction: it is called after the registration committed.
-     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void sendLink(UUID customerId) {
 
@@ -79,10 +66,6 @@ public class EmailVerificationService {
                 .ifPresent(this::issueAndSend);
     }
 
-    /**
-     * The customer asks for another link: at most one a minute and five a
-     * day, so the endpoint cannot be used to flood a mailbox.
-     */
     @Transactional
     public void resend(UUID customerId) {
 
@@ -113,9 +96,6 @@ public class EmailVerificationService {
         issueAndSend(customer);
     }
 
-    /**
-     * Uses a link. Every kind of bad link gets the same answer.
-     */
     @Transactional
     public CustomerResponse verify(String rawToken) {
 
@@ -129,8 +109,6 @@ public class EmailVerificationService {
                 customerRepository
                         .findById(token.getCustomerId())
                         .filter(found -> found.getStatus() != CustomerStatus.CLOSED)
-                        // Sent before an email change: it proves nothing
-                        // about the current address.
                         .filter(found -> found.getEmail().equals(token.getEmail()))
                         .orElseThrow(InvalidVerificationTokenException::new);
 
@@ -184,8 +162,6 @@ public class EmailVerificationService {
                         )
                 );
 
-        // Only once the token is committed: a rolled-back request sends
-        // nothing, and a slow mail server holds no database connection.
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {

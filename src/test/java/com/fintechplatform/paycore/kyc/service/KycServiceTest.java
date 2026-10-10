@@ -120,10 +120,6 @@ class KycServiceTest {
         ReflectionTestUtils.setField(profile, "id", UUID.randomUUID());
     }
 
-    // ============================================================
-    // CREATE / GET
-    // ============================================================
-
     @Test
     void shouldCreateKycProfile() {
 
@@ -180,10 +176,6 @@ class KycServiceTest {
                 .isInstanceOf(KycNotFoundException.class);
     }
 
-    // ============================================================
-    // START / SUBMIT
-    // ============================================================
-
     @Test
     void shouldStartKyc() {
 
@@ -208,7 +200,6 @@ class KycServiceTest {
         KycResponse response = kycService.startKyc(customerId);
 
         assertThat(response.status()).isEqualTo(KycStatus.IN_PROGRESS);
-        // The customer can still see what the reviewer asked for.
         assertThat(response.reviewReason()).isEqualTo("More please");
     }
 
@@ -304,10 +295,6 @@ class KycServiceTest {
         assertThatThrownBy(() -> kycService.submitKyc(customerId))
                 .isInstanceOf(KycNotFoundException.class);
     }
-
-    // ============================================================
-    // BVN
-    // ============================================================
 
     @Test
     void shouldVerifyBvnSuccessfully() {
@@ -504,10 +491,6 @@ class KycServiceTest {
         assertThat(response.status()).isEqualTo(KycStatus.IN_PROGRESS);
     }
 
-    // ============================================================
-    // RETRY LIMIT
-    // ============================================================
-
     @Test
     void shouldReportRemainingAttemptsAfterFailure() {
 
@@ -518,7 +501,6 @@ class KycServiceTest {
         KycVerificationResponse response =
                 kycService.verifyBvn(customerId, BVN_REQUEST, CLIENT_IP);
 
-        // 1 earlier failure + this one = 2 of 3.
         assertThat(response.remainingAttempts()).isEqualTo(1);
     }
 
@@ -560,7 +542,6 @@ class KycServiceTest {
         assertThatThrownBy(() -> kycService.verifyBvn(customerId, BVN_REQUEST, CLIENT_IP))
                 .isInstanceOf(BvnAttemptLimitExceededException.class);
 
-        // Refused before contacting the provider or recording anything.
         verifyNoInteractions(kycProvider);
         verify(kycVerificationRepository, never()).save(any());
     }
@@ -633,10 +614,6 @@ class KycServiceTest {
         verify(kycProfileRepository).findByCustomerForUpdate(customer);
         verify(kycProfileRepository, never()).findByCustomer(any());
     }
-
-    // ============================================================
-    // NETWORK (IP) LIMIT
-    // ============================================================
 
     @Test
     void shouldRecordNormalizedNetworkWithAttempt() {
@@ -782,10 +759,6 @@ class KycServiceTest {
                 .countByVerificationTypeAndIpAddressAndCreatedAtAfter(any(), any(), any());
     }
 
-    // ============================================================
-    // RETRY LIMIT RESET
-    // ============================================================
-
     @Test
     void shouldResetBvnAttemptsAsAdmin() {
 
@@ -805,7 +778,6 @@ class KycServiceTest {
 
         verify(kycProfileRepository).save(profile);
 
-        // History is untouched: nothing is deleted.
         verifyNoInteractions(kycVerificationRepository);
     }
 
@@ -909,10 +881,6 @@ class KycServiceTest {
         return since.getValue();
     }
 
-    // ============================================================
-    // ADMIN VIEW OF BVN ATTEMPTS
-    // ============================================================
-
     @Test
     void shouldShowAttemptsForCustomerBelowTheLimit() {
 
@@ -960,7 +928,6 @@ class KycServiceTest {
         assertThat(view.failedAttemptsCounted()).isEqualTo(3);
         assertThat(view.remainingAttempts()).isZero();
 
-        // Same rule verifyBvn uses: oldest counted failure + window.
         assertThat(view.retryAfter())
                 .isEqualTo(oldest.getCreatedAt().plus(Duration.ofHours(24)));
     }
@@ -1006,7 +973,6 @@ class KycServiceTest {
         assertThat(view.resetAt()).isEqualTo(profile.getBvnAttemptsResetAt());
         assertThat(view.resetBy()).isEqualTo(adminId);
 
-        // History is still visible.
         assertThat(view.attempts()).hasSize(3);
     }
 
@@ -1034,12 +1000,6 @@ class KycServiceTest {
                 .isInstanceOf(KycNotFoundException.class);
     }
 
-    /**
-     * Stubs both queries the admin view makes, over the same attempts:
-     * the page of history (returned as one page) and the counted-failures
-     * query, which applies the real repository predicate (FAILED, after
-     * {@code since}, oldest first) so the counting logic is exercised.
-     */
     private void stubHistory(KycVerification... newestFirst) {
 
         List<KycVerification> attempts = List.of(newestFirst);
@@ -1114,7 +1074,6 @@ class KycServiceTest {
         when(kycProfileRepository.findById(profile.getId()))
                 .thenReturn(Optional.of(profile));
 
-        // Page 1 of size 1 holds only the middle attempt...
         when(kycVerificationRepository
                 .findByKycProfileAndVerificationType(
                         eq(profile),
@@ -1127,7 +1086,6 @@ class KycServiceTest {
                         3
                 ));
 
-        // ...but the summary still sees all three counted failures.
         when(kycVerificationRepository
                 .findByKycProfileAndVerificationTypeAndResultAndCreatedAtAfterOrderByCreatedAtAscIdAsc(
                         eq(profile),
@@ -1170,10 +1128,6 @@ class KycServiceTest {
     private Instant hoursAgo(int hours) {
         return Instant.now().minus(Duration.ofHours(hours));
     }
-
-    // ============================================================
-    // REVIEW
-    // ============================================================
 
     @Test
     void shouldApproveKycUnderReview() {
@@ -1325,9 +1279,6 @@ class KycServiceTest {
                 .isInstanceOf(KycNotFoundException.class);
     }
 
-    /**
-     * Most BVN tests need a profile the customer has already started.
-     */
     private void stubProfileInProgress() {
 
         if (profile.getStatus() == KycStatus.NOT_STARTED) {
@@ -1363,10 +1314,6 @@ class KycServiceTest {
                 .thenReturn(profile);
     }
 
-    /**
-     * BVN checks load the profile with a row lock; other operations use
-     * the plain lookup. Each test only exercises one of them.
-     */
     private void stubProfile() {
 
         when(customerRepository.findById(customerId))

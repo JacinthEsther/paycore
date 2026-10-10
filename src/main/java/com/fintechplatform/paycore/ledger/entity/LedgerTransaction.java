@@ -12,27 +12,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
-/**
- * One financial event, e.g. a transfer. The money itself is in its
- * {@link LedgerEntry entries}; this records what happened, who asked for
- * it and where it is in its lifecycle.
- *
- * Every kind of transaction has its own factory, which sets exactly the
- * fields that kind needs (the database checks the same rules):
- *
- * <pre>
- * TRANSFER           customer to customer inside PayCore
- * DEPOSIT            card top-up a payment provider confirmed
- * INBOUND_TRANSFER   from another bank, reported by the bank rail
- * OUTBOUND_TRANSFER  to another bank, sent through the bank rail
- * ADJUSTMENT         manual correction, requested and approved by two officers
- * REVERSAL           undoes one of the above
- * </pre>
- *
- * There are no setters. The status only moves through {@link #post} and
- * {@link #markReversed}, and posting is where the double-entry rules are
- * enforced.
- */
 @Entity
 @Table(name = "ledger_transactions")
 public class LedgerTransaction {
@@ -55,43 +34,27 @@ public class LedgerTransaction {
     @Column(nullable = false, length = 3, updatable = false)
     private String currency;
 
-    /**
-     * Who asked for it: the customer for their own transfers and top-ups,
-     * the officer who made the request for staff corrections. Null only
-     * for an inbound transfer, which nobody at PayCore initiated.
-     */
     @Column(name = "initiated_by", updatable = false)
     private UUID initiatedBy;
 
     @Column(name = "idempotency_key", nullable = false, length = 100, updatable = false)
     private String idempotencyKey;
 
-    /** Customer-facing narration, shown on transactions and statements. */
     @Column(length = 500, updatable = false)
     private String description;
 
-    /**
-     * Why staff moved money. Internal: never part of a customer response.
-     * Required for adjustments and staff reversals.
-     */
     @Column(name = "staff_note", length = 500, updatable = false)
     private String staffNote;
 
-    /** For a staff correction, the officer who approved it (never the initiator). */
     @Column(name = "approved_by", updatable = false)
     private UUID approvedBy;
 
-    /**
-     * For anything a payment provider or bank rail carried: which one, and
-     * its own reference (payment reference, NIP session id).
-     */
     @Column(name = "provider", length = 30, updatable = false)
     private String provider;
 
     @Column(name = "provider_reference", length = 100, updatable = false)
     private String providerReference;
 
-    /** For transfers to or from another bank: the other side. */
     @Column(name = "counterparty_name", length = 200, updatable = false)
     private String counterpartyName;
 
@@ -110,18 +73,12 @@ public class LedgerTransaction {
     @Column(name = "reversed_at")
     private Instant reversedAt;
 
-    /** For a REVERSAL, the transaction it undoes; null otherwise. */
     @Column(name = "reverses_transaction_id", updatable = false)
     private UUID reversesTransactionId;
 
     protected LedgerTransaction() {
     }
 
-    // ============================================================
-    // FACTORIES
-    // ============================================================
-
-    /** A customer's transfer to another PayCore account. */
     public static LedgerTransaction createTransfer(
             String reference,
             String currency,
@@ -135,11 +92,6 @@ public class LedgerTransaction {
         );
     }
 
-    /**
-     * A card top-up the customer asked for and a payment provider
-     * confirmed. The provider and its payment reference record where the
-     * money came from.
-     */
     public static LedgerTransaction createProviderDeposit(
             String reference,
             String currency,
@@ -159,11 +111,6 @@ public class LedgerTransaction {
         return deposit;
     }
 
-    /**
-     * Money another bank sent to a PayCore account, as the bank rail
-     * reported it. Nobody at PayCore initiated it; the rail's session id
-     * is both its provider reference and its idempotency key.
-     */
     public static LedgerTransaction createInboundTransfer(
             String reference,
             String currency,
@@ -180,10 +127,6 @@ public class LedgerTransaction {
         return inbound;
     }
 
-    /**
-     * A customer's transfer to an account at another bank, sent through
-     * the bank rail under the given session id.
-     */
     public static LedgerTransaction createOutboundTransfer(
             String reference,
             String currency,
@@ -205,10 +148,27 @@ public class LedgerTransaction {
         return outbound;
     }
 
-    /**
-     * A manual correction: requested by one operations officer, approved
-     * by another, with the reason as the staff note.
-     */
+    public static LedgerTransaction createBillPayment(
+            String reference,
+            String currency,
+            UUID customerId,
+            String idempotencyKey,
+            String description,
+            String provider,
+            String requestId,
+            Counterparty biller
+    ) {
+        LedgerTransaction bill =
+                newTransaction(
+                        reference, LedgerTransactionType.BILL_PAYMENT, currency,
+                        Objects.requireNonNull(customerId, "customerId"), idempotencyKey, description
+                );
+
+        bill.setProvider(provider, requestId);
+        bill.setCounterparty(biller);
+        return bill;
+    }
+
     public static LedgerTransaction createAdjustment(
             String reference,
             String currency,
@@ -228,12 +188,6 @@ public class LedgerTransaction {
         return adjustment;
     }
 
-    /**
-     * A staff REVERSAL of a posted transaction: requested by one officer,
-     * approved by another. Its entries must be the original's with the
-     * sides swapped; posting it and marking the original reversed are
-     * separate steps.
-     */
     public static LedgerTransaction createReversal(
             String reference,
             LedgerTransaction original,
@@ -249,11 +203,6 @@ public class LedgerTransaction {
         return reversal;
     }
 
-    /**
-     * The automatic REVERSAL of an outbound transfer the bank rail
-     * rejected: the money goes back to the customer who sent it, with no
-     * staff involved.
-     */
     public static LedgerTransaction createRailReversal(
             String reference,
             LedgerTransaction original,
@@ -261,8 +210,9 @@ public class LedgerTransaction {
             String description,
             String providerReference
     ) {
-        if (original.type != LedgerTransactionType.OUTBOUND_TRANSFER) {
-            throw new IllegalArgumentException("Only an outbound transfer is reversed by the rail");
+        if (original.type != LedgerTransactionType.OUTBOUND_TRANSFER
+                && original.type != LedgerTransactionType.BILL_PAYMENT) {
+            throw new IllegalArgumentException("Only a payment to a provider is reversed by the provider");
         }
 
         LedgerTransaction reversal =
@@ -358,7 +308,6 @@ public class LedgerTransaction {
         this.counterpartyAccountNumber = counterparty.accountNumber();
     }
 
-    /** Four eyes, as the database checks too. */
     private void setApproval(UUID requestedBy, UUID approvedBy, String staffNote) {
 
         Objects.requireNonNull(approvedBy, "approvedBy");
@@ -375,19 +324,6 @@ public class LedgerTransaction {
         this.staffNote = staffNote;
     }
 
-    // ============================================================
-    // LIFECYCLE
-    // ============================================================
-
-    /**
-     * INITIATED -> POSTED, but only with a complete, balanced set of
-     * entries: at least two, all belonging to this transaction and in its
-     * currency, and total debits equal to total credits.
-     *
-     * The service always builds balanced entries, so a failure here is a
-     * bug, not bad input: it throws IllegalStateException (a 500) and the
-     * database transaction rolls back without moving any money.
-     */
     public void post(List<LedgerEntry> entries) {
 
         if (status != LedgerTransactionStatus.INITIATED) {
@@ -431,10 +367,6 @@ public class LedgerTransaction {
         postedAt = Instant.now();
     }
 
-    /**
-     * POSTED -> REVERSED. Only records the fact; the compensating
-     * transaction that undoes the money is posted separately.
-     */
     public void markReversed() {
 
         if (status != LedgerTransactionStatus.POSTED) {
@@ -444,10 +376,6 @@ public class LedgerTransaction {
         status = LedgerTransactionStatus.REVERSED;
         reversedAt = Instant.now();
     }
-
-    // ============================================================
-    // GETTERS
-    // ============================================================
 
     public UUID getId() {
         return id;
@@ -497,7 +425,6 @@ public class LedgerTransaction {
         return providerReference;
     }
 
-    /** The other bank's side of a bank transfer; null for anything else. */
     public Counterparty getCounterparty() {
         return counterpartyName == null
                 ? null

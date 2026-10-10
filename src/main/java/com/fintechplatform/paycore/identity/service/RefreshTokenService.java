@@ -35,9 +35,6 @@ public class RefreshTokenService {
         this.jwtProperties = jwtProperties;
     }
 
-    /**
-     * Starts a new token family for a freshly created login session.
-     */
     @Transactional
     public IssuedRefreshToken issue(
             Customer customer,
@@ -50,12 +47,6 @@ public class RefreshTokenService {
         );
     }
 
-    /**
-     * Exchanges a refresh token for a new one in the same family.
-     * Presenting a token that was already rotated revokes the whole
-     * family and its session. The revocation must be committed even
-     * though the exception propagates, hence noRollbackFor.
-     */
     @Transactional(noRollbackFor = RefreshTokenReuseException.class)
     public IssuedRefreshToken rotate(String rawToken) {
 
@@ -70,8 +61,6 @@ public class RefreshTokenService {
 
         if (current.isRevoked()) {
 
-            // Rotated tokens are handed out exactly once; seeing one again
-            // means it was copied. Tokens revoked by logout are just stale.
             if (current.getReplacedBy() != null) {
                 revokeFamily(current.getFamilyId());
                 loginSessionService.revoke(current.getSession());
@@ -83,8 +72,6 @@ public class RefreshTokenService {
 
         LoginSession session = current.getSession();
 
-        // Before the token's own expiry, so the client learns whether the
-        // session idled out or hit its absolute limit.
         if (!session.isRevoked()) {
             loginSessionService.ensureNotTimedOut(session);
         }
@@ -145,7 +132,6 @@ public class RefreshTokenService {
     ) {
         String rawToken = sessionTokenService.generate();
 
-        // Never outlives its session's absolute limit.
         Instant expiresAt =
                 Instant.now().plus(jwtProperties.getRefreshTokenExpiration());
 

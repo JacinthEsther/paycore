@@ -1,9 +1,5 @@
 package com.fintechplatform.paycore.funding.provider;
 
-/**
- * The provider's answer. providerReference identifies the payment at the
- * provider; reason says why a payment was declined (null when confirmed).
- */
 public record FundingResult(
         boolean confirmed,
         String providerReference,

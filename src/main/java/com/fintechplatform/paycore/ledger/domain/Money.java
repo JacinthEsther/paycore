@@ -4,11 +4,6 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.Objects;
 
-/**
- * A non-negative amount in whole minor units: ₦20,000.50 is 2,000,050
- * kobo. No floating point anywhere, and arithmetic fails loudly on
- * overflow or a currency mismatch instead of producing a wrong number.
- */
 public record Money(
         long amountMinor,
         Currency currency
@@ -26,10 +21,6 @@ public record Money(
         return new Money(amountMinor, currency);
     }
 
-    /**
-     * Converts an amount as people write it (20000.50) into minor units.
-     * Never rounds: 20000.505 NGN is rejected, not silently changed.
-     */
     public static Money ofMajor(BigDecimal amount, Currency currency) {
 
         Objects.requireNonNull(amount, "Amount is required");

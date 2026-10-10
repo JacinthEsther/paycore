@@ -7,13 +7,6 @@ import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
 
-/**
- * A customer adding money to one of their own accounts (in the path)
- * through the configured payment provider.
- *
- * Retrying with the same idempotency key and the same details returns the
- * original top-up without charging the customer again.
- */
 public record FundAccountRequest(
 
         @NotNull(message = "Amount is required")

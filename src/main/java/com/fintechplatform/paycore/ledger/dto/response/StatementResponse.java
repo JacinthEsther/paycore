@@ -7,11 +7,6 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
-/**
- * An account statement for the calendar days from..to (inclusive) in
- * timeZone. openingBalance + totalCredits - totalDebits = closingBalance
- * always holds, whichever page of lines this is.
- */
 public record StatementResponse(
         UUID accountId,
         String accountNumber,

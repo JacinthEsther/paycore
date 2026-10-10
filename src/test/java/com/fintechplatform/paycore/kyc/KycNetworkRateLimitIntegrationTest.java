@@ -37,11 +37,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/**
- * Per-network BVN rate limit over real HTTP, JWT and PostgreSQL, with a
- * low limit (3 checks per network per hour) so it is reachable without
- * tripping the per-customer limit. Only the KYC provider is mocked.
- */
 @Testcontainers
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -116,8 +111,6 @@ class KycNetworkRateLimitIntegrationTest {
         when(kycProvider.verifyBvn(any()))
                 .thenReturn(result(VerificationResult.FAILED));
 
-        // Three different accounts, one check each: under every
-        // per-customer limit, but they use up the network's budget.
         for (int i = 1; i <= 3; i++) {
             String account = customerWithKyc("acct" + i + "@example.com", "0801111113" + i);
 
@@ -126,7 +119,6 @@ class KycNetworkRateLimitIntegrationTest {
                     .andExpect(jsonPath("$.remainingAttempts").value(2));
         }
 
-        // A fourth fresh account from the same network is refused.
         String fourth = customerWithKyc("acct4@example.com", "08011111134");
 
         String retryAfter =
@@ -138,18 +130,14 @@ class KycNetworkRateLimitIntegrationTest {
                         .getResponse()
                         .getHeader("Retry-After");
 
-        // About an hour until the oldest check leaves the window.
         assertThat(Long.parseLong(retryAfter)).isBetween(3_500L, 3_600L);
 
-        // The blocked request never reached the provider.
         verify(kycProvider, times(3)).verifyBvn(any());
 
-        // Every recorded attempt carries its network.
         assertThat(jdbcTemplate.queryForList(
                 "SELECT DISTINCT ip_address FROM kyc_verifications", String.class
         )).containsExactly(ATTACKER_NETWORK);
 
-        // The same account from a different network is unaffected.
         verifyBvn(fourth, OTHER_NETWORK)
                 .andExpect(status().isOk());
     }
@@ -180,7 +168,6 @@ class KycNetworkRateLimitIntegrationTest {
         when(kycProvider.verifyBvn(any()))
                 .thenReturn(result(VerificationResult.FAILED));
 
-        // Rotating addresses inside one /64 does not escape the limit.
         for (int i = 1; i <= 3; i++) {
             String account = customerWithKyc("v6-" + i + "@example.com", "0801111115" + i);
 
@@ -202,8 +189,6 @@ class KycNetworkRateLimitIntegrationTest {
     void concurrentChecksFromOneNetworkShouldNotExceedTheLimit()
             throws Exception {
 
-        // Six different accounts, so the per-customer row lock does not
-        // serialize them: only the network lock can keep the count right.
         List<String> accounts = new ArrayList<>();
         for (int i = 1; i <= 6; i++) {
             accounts.add(customerWithKyc("race" + i + "@example.com", "0801111116" + i));
@@ -264,9 +249,6 @@ class KycNetworkRateLimitIntegrationTest {
         );
     }
 
-    /**
-     * Registers, logs in and creates a KYC profile; returns the access token.
-     */
     private String customerWithKyc(String email, String phone) throws Exception {
 
         mockMvc.perform(
@@ -302,7 +284,6 @@ class KycNetworkRateLimitIntegrationTest {
                         "$.accessToken"
                 );
 
-        // The KYC profile was created at registration.
         mockMvc.perform(
                         post("/api/v1/kyc/start")
                                 .header("Authorization", "Bearer " + accessToken)

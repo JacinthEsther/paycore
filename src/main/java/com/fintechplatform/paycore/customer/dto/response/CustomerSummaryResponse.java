@@ -6,9 +6,6 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
-/**
- * One row of the admin customer list.
- */
 public record CustomerSummaryResponse(
         UUID id,
         String firstName,

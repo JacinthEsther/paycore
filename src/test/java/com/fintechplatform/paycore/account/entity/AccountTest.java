@@ -72,10 +72,6 @@ class AccountTest {
         assertThat(account.isOwnedBy(UUID.randomUUID())).isFalse();
     }
 
-    // ------------------------------------------------------------
-    // activate
-    // ------------------------------------------------------------
-
     @Test
     void shouldActivatePendingAccount() {
 
@@ -109,10 +105,6 @@ class AccountTest {
         assertThatThrownBy(frozen::activate).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(closed::activate).isInstanceOf(IllegalStateException.class);
     }
-
-    // ------------------------------------------------------------
-    // freeze / unfreeze
-    // ------------------------------------------------------------
 
     @Test
     void shouldFreezeActiveAccount() {
@@ -165,10 +157,6 @@ class AccountTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Only frozen accounts can be unfrozen");
     }
-
-    // ------------------------------------------------------------
-    // close
-    // ------------------------------------------------------------
 
     @Test
     void shouldClosePendingAccount() {

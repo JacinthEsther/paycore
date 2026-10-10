@@ -10,11 +10,6 @@ import java.nio.charset.StandardCharsets;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
-/**
- * Loads the real application.properties / application-prod.properties
- * (through Spring Boot's config-data processing) with only the JWT
- * configuration, so the secret rules are checked without a database.
- */
 class ProdJwtSecretConfigurationTest {
 
     private static final String REAL_SECRET =
@@ -28,8 +23,6 @@ class ProdJwtSecretConfigurationTest {
     @Test
     void prodShouldRefuseToStartWithoutJwtSecret() {
 
-        // A PAYCORE_JWT_SECRET exported in the developer's shell would make
-        // this case unreachable; skip rather than give a false result.
         assumeTrue(
                 System.getenv("PAYCORE_JWT_SECRET") == null,
                 "PAYCORE_JWT_SECRET is set in this environment"
@@ -61,8 +54,6 @@ class ProdJwtSecretConfigurationTest {
     @Test
     void shouldReportMissingVariableEvenWhenPlaceholderIsLong() {
 
-        // Guards against relying on the 32-byte check by coincidence: a
-        // long unresolved placeholder must still be reported as missing.
         runner.withPropertyValues(
                         "paycore.jwt.secret=${SOME_VERY_LONG_UNSET_SECRET_VARIABLE_NAME_XYZ}"
                 )

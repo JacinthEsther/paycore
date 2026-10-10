@@ -7,22 +7,12 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
 
-/**
- * In-process stand-in for a KYC vendor, for the public Developer Preview
- * and local development without vendor credentials. It knows one test
- * record per number type and never calls out, so it cannot break on a
- * vendor outage, an expired key or an empty sandbox wallet.
- *
- * <p>Only a known test number whose names and date of birth all match
- * the record PASSES; any other number or a mismatch FAILS with a reason,
- * so retry limits and the review workflow behave as they would with a
- * real provider. It verifies nobody's real identity, so it must never be
- * enabled where real customers onboard.
- */
 @Component
 @ConditionalOnProperty(name = "paycore.kyc.provider", havingValue = "simulated")
 public class SimulatedKycProvider implements KycProvider {
@@ -35,11 +25,18 @@ public class SimulatedKycProvider implements KycProvider {
     private static final Record TEST_PERSON =
             new Record("John", "Doe", "1990-01-01");
 
-    private static final Map<String, Record> BVN_RECORDS =
-            Map.of(TEST_BVN, TEST_PERSON);
+    public static final List<SamplePerson> SAMPLE_PEOPLE = List.of(
+            new SamplePerson("Chioma", "Eze", "1994-03-12", "22222222301", "70123456301"),
+            new SamplePerson("Musa", "Bello", "1988-07-21", "22222222302", "70123456302"),
+            new SamplePerson("Ngozi", "Obi", "1991-11-05", "22222222303", "70123456303"),
+            new SamplePerson("Emeka", "Nwosu", "1985-02-28", "22222222304", "70123456304"),
+            new SamplePerson("Halima", "Yusuf", "1996-09-17", "22222222305", "70123456305"),
+            new SamplePerson("Tobi", "Adewale", "1993-06-30", "22222222306", "70123456306")
+    );
 
-    private static final Map<String, Record> NIN_RECORDS =
-            Map.of(TEST_NIN, TEST_PERSON);
+    private static final Map<String, Record> BVN_RECORDS = records(TEST_BVN, SamplePerson::bvn);
+
+    private static final Map<String, Record> NIN_RECORDS = records(TEST_NIN, SamplePerson::nin);
 
     private static final Logger log =
             LoggerFactory.getLogger(SimulatedKycProvider.class);
@@ -117,6 +114,26 @@ public class SimulatedKycProvider implements KycProvider {
                 result,
                 reason
         );
+    }
+
+    private static Map<String, Record> records(String testNumber, Function<SamplePerson, String> number) {
+
+        Map<String, Record> records = new HashMap<>();
+        records.put(testNumber, TEST_PERSON);
+        SAMPLE_PEOPLE.forEach(person -> records.put(
+                number.apply(person),
+                new Record(person.firstName(), person.lastName(), person.dateOfBirth())
+        ));
+        return Map.copyOf(records);
+    }
+
+    public record SamplePerson(
+            String firstName,
+            String lastName,
+            String dateOfBirth,
+            String bvn,
+            String nin
+    ) {
     }
 
     private record Record(

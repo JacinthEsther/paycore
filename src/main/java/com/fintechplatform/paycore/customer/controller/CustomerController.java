@@ -1,6 +1,5 @@
 package com.fintechplatform.paycore.customer.controller;
 
-
 import com.fintechplatform.paycore.customer.dto.request.RegisterCustomerRequest;
 import com.fintechplatform.paycore.customer.dto.request.UpdateCustomerRequest;
 import com.fintechplatform.paycore.customer.dto.response.CustomerResponse;
@@ -40,7 +39,6 @@ public class CustomerController {
                 .body(response);
     }
 
-
     @GetMapping("/{customerId}")
     @PreAuthorize("hasAuthority('CUSTOMER_READ')")
     public ResponseEntity<CustomerResponse> getCustomer(
@@ -52,7 +50,6 @@ public class CustomerController {
         );
     }
 
-
     @PatchMapping("/{customerId}")
     @PreAuthorize("hasAuthority('CUSTOMER_UPDATE')")
     public ResponseEntity<CustomerResponse> updateProfile(
@@ -63,6 +60,8 @@ public class CustomerController {
             UpdateCustomerRequest request
     ) {
 
+        customerService.requireNotStaff(customerId);
+
         return ResponseEntity.ok(
                 customerService.updateProfile(
                         customerId,
@@ -71,12 +70,13 @@ public class CustomerController {
         );
     }
 
-
     @PostMapping("/{customerId}/suspend")
     @PreAuthorize("hasAuthority('CUSTOMER_SUSPEND')")
     public ResponseEntity<CustomerResponse> suspend(
             @PathVariable UUID customerId
     ) {
+
+        customerService.requireNotStaff(customerId);
 
         return ResponseEntity.ok(
                 customerService.suspendCustomer(
@@ -85,12 +85,13 @@ public class CustomerController {
         );
     }
 
-
     @PostMapping("/{customerId}/reactivate")
     @PreAuthorize("hasAuthority('CUSTOMER_SUSPEND')")
     public ResponseEntity<CustomerResponse> reactivate(
             @PathVariable UUID customerId
     ) {
+
+        customerService.requireNotStaff(customerId);
 
         return ResponseEntity.ok(
                 customerService.reactivateCustomer(
@@ -99,12 +100,13 @@ public class CustomerController {
         );
     }
 
-
     @DeleteMapping("/{customerId}")
     @PreAuthorize("hasAuthority('CUSTOMER_CLOSE')")
     public ResponseEntity<Void> closeAccount(
             @PathVariable UUID customerId
     ) {
+
+        customerService.requireNotStaff(customerId);
 
         customerService.closeCustomer(customerId);
 

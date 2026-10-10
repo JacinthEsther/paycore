@@ -299,10 +299,6 @@ class AdminRoleIntegrationTest {
         );
     }
 
-    /**
-     * The first admin has to be created outside the API, the same way an
-     * operator would seed it.
-     */
     private void bootstrapAdmin(UUID customerId) {
         bootstrapRole(customerId, RoleName.ADMIN);
     }

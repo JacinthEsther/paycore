@@ -6,6 +6,7 @@ import com.fintechplatform.paycore.ledger.dto.response.StatementResponse;
 import com.fintechplatform.paycore.ledger.dto.response.TransactionResponse;
 import com.fintechplatform.paycore.ledger.service.LedgerService;
 import com.fintechplatform.paycore.ledger.service.StatementService;
+import com.fintechplatform.paycore.pin.service.TransactionAuthorizationService;
 import com.fintechplatform.paycore.security.CurrentUser;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -20,34 +21,34 @@ import java.net.URI;
 import java.time.LocalDate;
 import java.util.UUID;
 
-/**
- * Customer money movement and balances. The customer id always comes from
- * the access token: transfers only leave the caller's own accounts, and
- * balances and transactions are only visible to the customers involved.
- */
 @RestController
 @RequestMapping("/api/v1/ledger")
 public class LedgerController {
 
     private final LedgerService ledgerService;
     private final StatementService statementService;
+    private final TransactionAuthorizationService transactionAuthorization;
 
-    public LedgerController(LedgerService ledgerService, StatementService statementService) {
+    public LedgerController(
+            LedgerService ledgerService,
+            StatementService statementService,
+            TransactionAuthorizationService transactionAuthorization
+    ) {
         this.ledgerService = ledgerService;
         this.statementService = statementService;
+        this.transactionAuthorization = transactionAuthorization;
     }
 
-    /**
-     * 201 with the transaction. A retry with the same idempotency key
-     * returns the same transaction again.
-     */
     @PostMapping("/accounts/{sourceAccountId}/transfers")
     @PreAuthorize("hasAuthority('TRANSACTION_CREATE')")
     public ResponseEntity<TransactionResponse> transfer(
             @AuthenticationPrincipal CurrentUser currentUser,
             @PathVariable UUID sourceAccountId,
-            @Valid @RequestBody TransferRequest request
+            @Valid @RequestBody TransferRequest request,
+            @RequestHeader(name = TransactionAuthorizationService.PIN_HEADER, required = false) String pin
     ) {
+
+        transactionAuthorization.authorize(currentUser, pin);
 
         TransactionResponse transaction =
                 ledgerService.transfer(currentUser.customerId(), sourceAccountId, request);
@@ -67,11 +68,6 @@ public class LedgerController {
         return ledgerService.getBalance(currentUser.customerId(), accountId);
     }
 
-    /**
-     * Opening and closing balance, totals and the lines with running
-     * balances for whole days (ISO dates, e.g. 2026-09-01) in PayCore's
-     * statement time zone. Defaults to the month to date.
-     */
     @GetMapping("/accounts/{accountId}/statement")
     @PreAuthorize("hasAuthority('ACCOUNT_READ')")
     public StatementResponse getStatement(

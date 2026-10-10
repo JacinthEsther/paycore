@@ -7,6 +7,7 @@ const TYPE_LABELS: Record<TransactionType, string> = {
   DEPOSIT: 'Card top-up',
   INBOUND_TRANSFER: 'Bank transfer',
   OUTBOUND_TRANSFER: 'Bank transfer',
+  BILL_PAYMENT: 'Bill payment',
   ADJUSTMENT: 'Adjustment',
   REVERSAL: 'Reversal',
   WITHDRAWAL: 'Withdrawal',
@@ -16,7 +17,6 @@ export function typeLabel(type: TransactionType) {
   return TYPE_LABELS[type];
 }
 
-/** The line's headline, as a banking app writes it. */
 export function lineTitle(line: StatementLine) {
   const credit = line.direction === 'CREDIT';
 
@@ -43,7 +43,6 @@ function dayLabel(iso: string) {
   return date.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-/** Statement lines, newest first, grouped by day. */
 export function TransactionList({
   lines,
   currency,

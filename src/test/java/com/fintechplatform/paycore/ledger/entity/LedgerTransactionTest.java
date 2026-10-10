@@ -18,10 +18,6 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/**
- * The double-entry rules: positive entries, one currency, debits equal
- * credits, and the INITIATED -> POSTED -> REVERSED lifecycle.
- */
 class LedgerTransactionTest {
 
     private static final Currency NGN = Currency.of("NGN");
@@ -126,7 +122,6 @@ class LedgerTransactionTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("transaction currency");
 
-        // A USD transaction cannot touch an NGN account.
         assertThatThrownBy(() -> LedgerEntry.debit(transfer("USD"), esther, dollars))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("account currency");
@@ -150,7 +145,6 @@ class LedgerTransactionTest {
         assertThatThrownBy(transaction::markReversed)
                 .isInstanceOf(IllegalStateException.class);
     }
-
 
     @Test
     void reversalShouldBeLinkedToThePostedOriginal() {
@@ -210,7 +204,6 @@ class LedgerTransactionTest {
         assertThat(adjustment.getApprovedBy()).isEqualTo(checker);
         assertThat(adjustment.getStaffNote()).isEqualTo("Fee refund");
 
-        // Four eyes: the maker cannot approve their own correction.
         assertThatThrownBy(() -> LedgerTransaction.createAdjustment(
                 "TXN-A", "NGN", maker, maker, "key-adj-2", "Adjustment", "Fee refund"
         )).isInstanceOf(IllegalArgumentException.class);
@@ -337,7 +330,6 @@ class LedgerTransactionTest {
         return entries;
     }
 
-    /** A posted transfer with an id, ready to be reversed. */
     private LedgerTransaction posted() {
 
         LedgerTransaction transaction = transfer("NGN");

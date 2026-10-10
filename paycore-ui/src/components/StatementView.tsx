@@ -5,21 +5,13 @@ import { formatDate, formatMoney, humanize, Notice, StatusBadge } from './ui';
 
 const PAGE_SIZE = 20;
 
-/**
- * An account statement: period totals and every line with its running
- * balance. Empty dates mean the month to date, which is what the API
- * defaults to. Works against the customer endpoint or the staff one.
- */
 export function StatementView({
   path,
   refreshKey = 0,
   lineAction,
 }: {
-  /** /api/v1/ledger/accounts/{id}/statement or the /admin equivalent */
   path: string;
-  /** Change it to reload, e.g. after a transfer. */
   refreshKey?: number;
-  /** Staff only: something to show at the end of a line, e.g. Reverse. */
   lineAction?: (line: StatementLine) => ReactNode;
 }) {
   const [from, setFrom] = useState('');
@@ -43,7 +35,6 @@ export function StatementView({
     [path],
   );
 
-  // Dates only apply when the form is submitted, so typing does not refetch.
   const [applied, setApplied] = useState({ from: '', to: '' });
 
   useEffect(() => {

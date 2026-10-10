@@ -4,14 +4,9 @@ import { api, errorMessage } from '../../api/client';
 import type { OpsRequest } from '../../api/types';
 import { useAuth } from '../../auth/AuthContext';
 import { ScreenTitle } from '../../components/Layout';
-import { formatAccountNumber, formatDate, formatMoney, Notice, StatusBadge } from '../../components/ui';
+import { formatAccountNumber, formatDate, formatMoney, humanize, Notice, StatusBadge } from '../../components/ui';
 import { markDone } from '../../journey';
 
-/**
- * The maker-checker queue. Officers file reversals (from Transactions) and
- * adjustments (from Customers); a different officer approves or rejects
- * them here. Nothing moves until a second person approves.
- */
 export function Operations() {
   const { can, session } = useAuth();
   const [pending, setPending] = useState<OpsRequest[] | null>(null);
@@ -38,24 +33,29 @@ export function Operations() {
   return (
     <>
       <ScreenTitle title="Approvals">
-        Every manual correction needs two people. An officer files it with a reason; a different officer approves it,
-        and only then does the ledger post it, recording both. The API refuses an officer approving their own request.
+        An Officer requests every correction; a Supervisor approves it before any money moves.
       </ScreenTitle>
 
-      {!can('LEDGER_APPROVE') && <Notice tone="info">You can file requests but not approve them.</Notice>}
+      {!can('LEDGER_APPROVE') && <Notice tone="info">You file requests; a Supervisor approves them.</Notice>}
+      {!can('LEDGER_REQUEST') && (
+        <Notice tone="info">You approve or reject what officers file; you cannot file requests yourself.</Notice>
+      )}
       {error && <Notice tone="bad">{error}</Notice>}
 
       <section className="panel">
         <header className="panel-head">
           <h2>Waiting for approval</h2>
-          <span className="muted small">
-            File a <Link to="/admin/ledger">reversal</Link> or an <Link to="/admin/customers">adjustment</Link>
-          </span>
+          {can('LEDGER_REQUEST') && (
+            <span className="muted small">
+              File a <Link to="/admin/ledger">reversal</Link>, an <Link to="/admin/customers">adjustment</Link> or a{' '}
+              <Link to="/admin/payments">payment resolution</Link>
+            </span>
+          )}
         </header>
         {pending === null ? (
           <p className="muted">Loading…</p>
         ) : pending.length === 0 ? (
-          <p className="empty-state">Nothing waiting. Requests filed by officers appear here.</p>
+          <p className="empty-state">Nothing waiting. Requests filed by Operations Officers appear here.</p>
         ) : (
           <ul className="ops-list">
             {pending.map((request) => (
@@ -117,6 +117,17 @@ export function Operations() {
 
 function describe(request: OpsRequest) {
   if (request.type === 'REVERSAL') return <>Reverse <code>{request.transactionReference}</code></>;
+  if (request.type === 'PAYMENT_RESOLUTION') {
+    return (
+      <>
+        {humanize(request.resolution ?? '')} payment{' '}
+        <Link to={`/admin/payments?status=ALL&id=${request.paymentId}`}>
+          <code>{request.paymentReference}</code>
+        </Link>{' '}
+        · {request.accountName}
+      </>
+    );
+  }
   return (
     <>
       {request.direction === 'CREDIT' ? 'Credit' : 'Debit'} {request.accountName} ·{' '}
@@ -157,8 +168,8 @@ function PendingRequest({
   return (
     <li className="ops-item">
       <div className="ops-main">
-        <span className={`chip ${request.type === 'REVERSAL' ? 'chip-warn' : 'chip-info'}`}>
-          {request.type === 'REVERSAL' ? 'Reversal' : 'Adjustment'}
+        <span className={`chip ${request.type === 'ADJUSTMENT' ? 'chip-info' : 'chip-warn'}`}>
+          {request.type === 'REVERSAL' ? 'Reversal' : request.type === 'PAYMENT_RESOLUTION' ? 'Payment' : 'Adjustment'}
         </span>
         <strong>{describe(request)}</strong>
         <span className="ops-amount">{formatMoney(request.amount, request.currency)}</span>

@@ -111,10 +111,6 @@ class AccountServiceTest {
                 .thenAnswer(invocation -> withId(invocation.getArgument(0)));
     }
 
-    // ============================================================
-    // OPENING
-    // ============================================================
-
     @Test
     void shouldOpenPendingAccountForCustomer() {
 
@@ -164,8 +160,6 @@ class AccountServiceTest {
 
         accountService.openAccount(customerId, request("NGN"));
 
-        // A reference only: the auth check has already vetted the customer
-        // for this request, and KYC is checked at activation.
         verify(customerRepository).getReferenceById(customerId);
         verifyNoMoreInteractions(customerRepository);
         verifyNoInteractions(kycProfileRepository);
@@ -181,13 +175,8 @@ class AccountServiceTest {
         verify(transactionManager, times(1)).getTransaction(any());
         verify(transactionManager, times(1)).commit(any());
 
-        // No "does it exist?" queries: the unique constraints decide.
         verifyNoMoreInteractions(accountRepository);
     }
-
-    // ============================================================
-    // ACCOUNT NUMBER COLLISIONS
-    // ============================================================
 
     @Test
     void shouldRetryWithNewNumberAfterCollision() {
@@ -204,7 +193,6 @@ class AccountServiceTest {
 
         assertThat(response.accountNumber()).isEqualTo("2222222222");
 
-        // Each attempt had its own transaction; the failed one rolled back.
         verify(transactionManager, times(2)).getTransaction(any());
         verify(transactionManager).rollback(any());
     }
@@ -253,10 +241,6 @@ class AccountServiceTest {
                 .isSameAs(other);
     }
 
-    // ============================================================
-    // READING
-    // ============================================================
-
     @Test
     void shouldReturnOwnAccount() {
 
@@ -291,10 +275,6 @@ class AccountServiceTest {
         assertThatThrownBy(() -> accountService.getCustomerAccounts(unknown))
                 .isInstanceOf(CustomerNotFoundException.class);
     }
-
-    // ============================================================
-    // ACTIVATION
-    // ============================================================
 
     @Test
     void shouldActivatePendingAccountOfVerifiedCustomer() {
@@ -359,10 +339,6 @@ class AccountServiceTest {
                 .isInstanceOf(InvalidAccountStateException.class)
                 .hasMessage("Only pending accounts can be activated");
     }
-
-    // ============================================================
-    // STAFF STATUS CHANGES
-    // ============================================================
 
     @Test
     void shouldFreezeAccountAndRecordWhoAndWhy() {
@@ -458,10 +434,6 @@ class AccountServiceTest {
                     assertThat(event.performedBy()).isEqualTo(customerId);
                 });
     }
-
-    // ============================================================
-    // HELPERS
-    // ============================================================
 
     private Account givenStoredAccount() {
         return givenStoredAccount(true);

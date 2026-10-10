@@ -8,13 +8,6 @@ import io.swagger.v3.oas.models.security.SecurityScheme;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-/**
- * API description served at /v3/api-docs, browsable at /swagger-ui.html.
- * Every operation is documented as needing a bearer access token; the
- * public ones (login, registration, demo info) simply ignore it. In
- * Swagger UI, call /api/v1/auth/login, then paste the accessToken into
- * "Authorize".
- */
 @Configuration
 public class OpenApiConfig {
 

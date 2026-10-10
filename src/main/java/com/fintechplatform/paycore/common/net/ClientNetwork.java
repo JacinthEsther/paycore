@@ -6,31 +6,10 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.regex.Pattern;
 
-/**
- * Normalizes a client IP address into the network key used for rate
- * limiting and stored for audit.
- *
- * <ul>
- *     <li>IPv4: the address itself, e.g. {@code 203.0.113.7}.</li>
- *     <li>IPv6: the /64 prefix, e.g. {@code 2001:db8:1:2::/64}. A single
- *     subscriber is normally given a whole /64, so keying on individual
- *     IPv6 addresses would let one client rotate through billions.</li>
- *     <li>IPv4-mapped IPv6 ({@code ::ffff:203.0.113.7}): the IPv4 address.</li>
- *     <li>Missing or unparseable input: {@code "unknown"}, which is still
- *     rate limited as one shared bucket rather than bypassing the limit.</li>
- * </ul>
- */
 public final class ClientNetwork {
 
     public static final String UNKNOWN = "unknown";
 
-    /**
-     * InetAddress.getByName performs a DNS lookup for anything it does not
-     * recognise as a literal, including near-misses like "999.1.1.1" or
-     * "abc". So it is only called for input that is certainly a literal:
-     * a strict dotted-quad IPv4 address, or text containing ':' (which
-     * Java always parses as an IPv6 literal and never resolves).
-     */
     private static final Pattern IPV4_LITERAL =
             Pattern.compile(
                     "((25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)\\.){3}"
@@ -87,10 +66,6 @@ public final class ClientNetwork {
         return UNKNOWN;
     }
 
-    /**
-     * Removes URI brackets ({@code [::1]}) and IPv6 zone ids
-     * ({@code fe80::1%eth0}).
-     */
     private static String stripDecorations(String value) {
 
         String result = value;

@@ -11,14 +11,9 @@ interface Probe {
   method: string;
   path: (kycId: string | null) => string;
   auth: () => AuthMode;
-  expected: (isAdmin: boolean, kycId: string | null) => number;
+  expected: (can: (permission: string) => boolean, kycId: string | null) => number;
 }
 
-/**
- * Changes one character in the middle of the signature so the HMAC no
- * longer verifies. (The last base64url character carries padding bits, so
- * editing it may not change the decoded signature at all.)
- */
 function tamperedToken(): AuthMode {
   const token = getSession()?.accessToken ?? '';
   const i = token.length - 10;
@@ -61,21 +56,21 @@ const PROBES: Probe[] = [
     method: 'GET',
     path: () => '/api/v1/admin/customers',
     auth: () => 'bearer',
-    expected: (isAdmin) => (isAdmin ? 200 : 403),
+    expected: (can) => (can('CUSTOMER_READ') ? 200 : 403),
   },
   {
     id: 'self-approve',
     title: 'Approve your own KYC',
-    explain: 'Needs KYC_REVIEW. Even an admin gets 403 here, because the service refuses reviews of your own profile (404 if the admin has no KYC profile).',
+    explain: 'Needs KYC_REVIEW, which only Compliance has. Even Compliance gets 403 on their own profile, because nobody may review themselves (404 if they have no KYC profile).',
     method: 'POST',
     path: (kycId) => `/api/v1/kyc/${kycId ?? '00000000-0000-7000-8000-000000000000'}/approve`,
     auth: () => 'bearer',
-    expected: (isAdmin, kycId) => (isAdmin && !kycId ? 404 : 403),
+    expected: (can, kycId) => (can('KYC_REVIEW') && !kycId ? 404 : 403),
   },
 ];
 
 export function Security() {
-  const { session, claims, isAdmin, logout } = useAuth();
+  const { session, claims, isStaff, can, logout } = useAuth();
   const [kycId, setKycId] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, number | null>>({});
   const [running, setRunning] = useState(false);
@@ -105,8 +100,8 @@ export function Security() {
     setRunning(false);
   }
 
-  async function switchToAdmin() {
-    await logout('/login?as=staff&switched=1');
+  async function switchToCompliance() {
+    await logout('/login?as=staff&staff=compliance%40paycore.demo&switched=1');
   }
 
   return (
@@ -128,7 +123,7 @@ export function Security() {
         >
           <ul className="probes">
             {PROBES.map((probe) => {
-              const expected = probe.expected(isAdmin, kycId);
+              const expected = probe.expected(can, kycId);
               const actual = results[probe.id];
               const ran = probe.id in results;
               return (
@@ -191,19 +186,19 @@ export function Security() {
         </Card>
       </div>
 
-      {!isAdmin && (
+      {!isStaff && (
         <section id="switch" className="switch-card">
           <div>
             <p className="eyebrow">End of the customer phase</p>
-            <h2>Do you want to see the flow as an admin?</h2>
+            <h2>Do you want to see the other side?</h2>
             <p>
-              I'll sign you out, which revokes this login session on the server, and take you to the admin sign-in. There
-              you can pick up the KYC application you just submitted, approve it or send it back, and manage roles
-              with a full audit trail.
+              I'll sign you out, which revokes this login session on the server, and take you to the staff sign-in as the
+              Compliance Officer. There you can pick up the KYC application you just submitted, look at the BVN result
+              and your document, and approve it or send it back.
             </p>
           </div>
-          <button className="btn btn-primary btn-lg" onClick={switchToAdmin}>
-            Sign out &amp; continue as admin →
+          <button className="btn btn-primary btn-lg" onClick={switchToCompliance}>
+            Sign out &amp; continue as Compliance →
           </button>
         </section>
       )}

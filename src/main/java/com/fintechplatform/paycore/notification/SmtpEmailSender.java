@@ -3,10 +3,6 @@ package com.fintechplatform.paycore.notification;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 
-/**
- * Sends through the JavaMailSender that Spring Boot configures from the
- * spring.mail.* properties.
- */
 public class SmtpEmailSender implements EmailSender {
 
     private final JavaMailSender mailSender;

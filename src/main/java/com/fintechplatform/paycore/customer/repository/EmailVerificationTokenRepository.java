@@ -19,10 +19,6 @@ public interface EmailVerificationTokenRepository
 
     Optional<EmailVerificationToken> findFirstByCustomerIdOrderByCreatedAtDesc(UUID customerId);
 
-    /**
-     * Retires every link still open for the customer, so only the newest
-     * one ever works.
-     */
     @Modifying
     @Query("""
             UPDATE EmailVerificationToken t

@@ -2,6 +2,7 @@ package com.fintechplatform.paycore.identity.entity;
 
 import com.fintechplatform.paycore.common.persistence.UuidV7;
 import com.fintechplatform.paycore.customer.entity.Customer;
+import com.fintechplatform.paycore.device.entity.CustomerDevice;
 import jakarta.persistence.*;
 
 import java.time.Duration;
@@ -61,6 +62,10 @@ public class LoginSession {
     @Column(name = "user_agent", length = 1000)
     private String userAgent;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "device_id")
+    private CustomerDevice device;
+
     protected LoginSession() {
     }
 
@@ -70,6 +75,17 @@ public class LoginSession {
             Instant expiresAt,
             String ipAddress,
             String userAgent
+    ) {
+        return create(customer, sessionTokenHash, expiresAt, ipAddress, userAgent, null);
+    }
+
+    public static LoginSession create(
+            Customer customer,
+            String sessionTokenHash,
+            Instant expiresAt,
+            String ipAddress,
+            String userAgent,
+            CustomerDevice device
     ) {
         Instant now = Instant.now();
 
@@ -82,6 +98,7 @@ public class LoginSession {
         session.lastUsedAt = now;
         session.ipAddress = ipAddress;
         session.userAgent = userAgent;
+        session.device = device;
 
         return session;
     }
@@ -94,10 +111,6 @@ public class LoginSession {
         return Instant.now().isAfter(expiresAt);
     }
 
-    /**
-     * True when the session has not been used for longer than
-     * {@code idleTimeout}.
-     */
     public boolean isIdle(Duration idleTimeout) {
         return Instant.now().isAfter(lastUsedAt.plus(idleTimeout));
     }
@@ -156,5 +169,9 @@ public class LoginSession {
 
     public String getUserAgent() {
         return userAgent;
+    }
+
+    public CustomerDevice getDevice() {
+        return device;
     }
 }

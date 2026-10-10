@@ -7,9 +7,6 @@ import java.time.Duration;
 @ConfigurationProperties(prefix = "paycore.jwt")
 public class JwtProperties {
 
-    /**
-     * HMAC-SHA256 signing secret. Must be at least 32 bytes.
-     */
     private String secret;
 
     private Duration accessTokenExpiration = Duration.ofMinutes(5);

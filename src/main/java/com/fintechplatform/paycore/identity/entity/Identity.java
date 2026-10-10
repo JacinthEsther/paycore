@@ -60,7 +60,6 @@ public class Identity {
     protected Identity() {
     }
 
-
     public static Identity createPasswordIdentity(
             Customer customer,
             String providerSubject,
@@ -80,12 +79,6 @@ public class Identity {
         return identity;
     }
 
-
-
-    /**
-     * Signs in with Google. The subject is Google's stable account id
-     * ("sub"), never the email, which a Google user can change.
-     */
     public static Identity createGoogleIdentity(
             Customer customer,
             String googleSubject
@@ -103,7 +96,6 @@ public class Identity {
         return identity;
     }
 
-    /** For a password identity, whose subject is the customer's email. */
     public void changeProviderSubject(String providerSubject) {
         this.providerSubject = providerSubject;
         touch();

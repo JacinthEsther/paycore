@@ -9,10 +9,6 @@ import org.springframework.context.annotation.Configuration;
 @EnableConfigurationProperties(GoogleProperties.class)
 public class GoogleConfiguration {
 
-    /**
-     * Deliberately not a JwtDecoder bean: the application's own JwtDecoder
-     * (for PayCore access tokens) must stay the only one.
-     */
     @Bean
     public GoogleIdTokenVerifier googleIdTokenVerifier(GoogleProperties properties) {
 

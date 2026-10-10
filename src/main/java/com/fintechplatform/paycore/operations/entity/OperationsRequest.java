@@ -7,23 +7,13 @@ import com.fintechplatform.paycore.operations.enums.OperationsRequestStatus;
 import com.fintechplatform.paycore.operations.enums.OperationsRequestType;
 import com.fintechplatform.paycore.operations.exception.FourEyesViolationException;
 import com.fintechplatform.paycore.operations.exception.RequestAlreadyDecidedException;
+import com.fintechplatform.paycore.payment.enums.PaymentResolution;
 import jakarta.persistence.*;
 
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 
-/**
- * A correction one operations officer (the maker) asks for and a
- * different one (the checker) approves or rejects. Nothing moves until it
- * is approved; the approval posts the ledger transaction and records it
- * here.
- *
- * <pre>
- * PENDING --approve--> APPROVED (result transaction set)
- *         --reject---> REJECTED
- * </pre>
- */
 @Entity
 @Table(name = "operations_requests")
 public class OperationsRequest {
@@ -56,6 +46,13 @@ public class OperationsRequest {
     @Column(name = "transaction_id", updatable = false)
     private UUID transactionId;
 
+    @Column(name = "payment_id", updatable = false)
+    private UUID paymentId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20, updatable = false)
+    private PaymentResolution resolution;
+
     @Column(nullable = false, length = 500, updatable = false)
     private String reason;
 
@@ -86,7 +83,6 @@ public class OperationsRequest {
     protected OperationsRequest() {
     }
 
-    /** Credit (or debit) the account by the amount, against settlement. */
     public static OperationsRequest adjustment(
             UUID requestedBy,
             UUID accountId,
@@ -107,7 +103,6 @@ public class OperationsRequest {
         return request;
     }
 
-    /** Undo the transaction. */
     public static OperationsRequest reversal(
             UUID requestedBy,
             UUID transactionId,
@@ -116,6 +111,20 @@ public class OperationsRequest {
     ) {
         OperationsRequest request = newRequest(OperationsRequestType.REVERSAL, requestedBy, reason, customerDescription);
         request.transactionId = Objects.requireNonNull(transactionId, "transactionId");
+        return request;
+    }
+
+    public static OperationsRequest paymentResolution(
+            UUID requestedBy,
+            UUID paymentId,
+            PaymentResolution resolution,
+            String reason,
+            String customerDescription
+    ) {
+        OperationsRequest request =
+                newRequest(OperationsRequestType.PAYMENT_RESOLUTION, requestedBy, reason, customerDescription);
+        request.paymentId = Objects.requireNonNull(paymentId, "paymentId");
+        request.resolution = Objects.requireNonNull(resolution, "resolution");
         return request;
     }
 
@@ -140,10 +149,6 @@ public class OperationsRequest {
         return request;
     }
 
-    /**
-     * Checks that this officer may decide it: still pending, and not the
-     * officer who asked for it.
-     */
     public void requireDecidableBy(UUID officerId) {
 
         if (status != OperationsRequestStatus.PENDING) {
@@ -163,7 +168,10 @@ public class OperationsRequest {
         this.decidedBy = checkerId;
         this.decidedAt = Instant.now();
         this.decisionNote = normalize(note);
-        this.resultTransactionId = Objects.requireNonNull(resultTransactionId, "resultTransactionId");
+        this.resultTransactionId =
+                type == OperationsRequestType.PAYMENT_RESOLUTION
+                        ? resultTransactionId
+                        : Objects.requireNonNull(resultTransactionId, "resultTransactionId");
     }
 
     public void reject(UUID checkerId, String note) {
@@ -180,10 +188,6 @@ public class OperationsRequest {
         this.decisionNote = note.trim();
     }
 
-    /**
-     * The ledger idempotency key of the transaction an approval posts: one
-     * request can only ever post one transaction.
-     */
     public String ledgerKey() {
         return "ops-request-" + id;
     }
@@ -222,6 +226,14 @@ public class OperationsRequest {
 
     public UUID getTransactionId() {
         return transactionId;
+    }
+
+    public UUID getPaymentId() {
+        return paymentId;
+    }
+
+    public PaymentResolution getResolution() {
+        return resolution;
     }
 
     public String getReason() {

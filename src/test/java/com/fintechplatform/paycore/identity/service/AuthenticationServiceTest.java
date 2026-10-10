@@ -20,6 +20,7 @@ import com.fintechplatform.paycore.security.AccessTokenService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import com.fintechplatform.paycore.device.service.DeviceService;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -71,6 +72,9 @@ class AuthenticationServiceTest {
     @Mock
     private PlatformTransactionManager transactionManager;
 
+    @Mock
+    private DeviceService deviceService;
+
     private AuthenticationService authenticationService;
 
     @BeforeEach
@@ -84,7 +88,8 @@ class AuthenticationServiceTest {
                         passwordEncoder,
                         accessTokenService,
                         refreshTokenService,
-                        new TransactionTemplate(transactionManager)
+                        new TransactionTemplate(transactionManager),
+                        deviceService
                 );
     }
 
@@ -127,7 +132,8 @@ class AuthenticationServiceTest {
                 eq(customer),
                 eq("token-hash"),
                 eq("127.0.0.1"),
-                eq("Mozilla/5.0")
+                eq("Mozilla/5.0"),
+                isNull()
         )).thenReturn(session);
 
         AccessToken accessToken =
@@ -189,7 +195,8 @@ class AuthenticationServiceTest {
                         eq(customer),
                         eq("token-hash"),
                         eq("127.0.0.1"),
-                        eq("Mozilla/5.0")
+                        eq("Mozilla/5.0"),
+                        isNull()
                 );
     }
 
@@ -385,7 +392,8 @@ class AuthenticationServiceTest {
                         customer,
                         "token-hash",
                         "127.0.0.1",
-                        "Mozilla/5.0"
+                        "Mozilla/5.0",
+                        null
                 );
 
         verify(refreshTokenService)
@@ -412,7 +420,8 @@ class AuthenticationServiceTest {
                         eq(customer),
                         storedHash.capture(),
                         anyString(),
-                        anyString()
+                        anyString(),
+                        any()
                 );
 
         assertThat(storedHash.getValue())
@@ -424,7 +433,8 @@ class AuthenticationServiceTest {
                         any(Customer.class),
                         eq("raw-token"),
                         anyString(),
-                        anyString()
+                        anyString(),
+                        any()
                 );
     }
 
@@ -438,7 +448,7 @@ class AuthenticationServiceTest {
         when(session.getId()).thenReturn(UUID.randomUUID());
         when(sessionTokenService.generate()).thenReturn("raw-token");
         when(sessionTokenService.hash("raw-token")).thenReturn("token-hash");
-        when(loginSessionService.createSession(any(), any(), any(), any()))
+        when(loginSessionService.createSession(any(), any(), any(), any(), any()))
                 .thenReturn(session);
 
         authenticationService.login(
@@ -446,11 +456,10 @@ class AuthenticationServiceTest {
                 CONTEXT
         );
 
-        // BCrypt is slow on purpose; no pooled connection may wait on it.
         var order = inOrder(passwordEncoder, transactionManager, loginSessionService);
         order.verify(passwordEncoder).matches(anyString(), anyString());
         order.verify(transactionManager).getTransaction(any());
-        order.verify(loginSessionService).createSession(any(), any(), any(), any());
+        order.verify(loginSessionService).createSession(any(), any(), any(), any(), any());
         order.verify(transactionManager).commit(any());
     }
 
@@ -470,10 +479,6 @@ class AuthenticationServiceTest {
 
         verifyNoInteractions(transactionManager, loginSessionService);
     }
-
-    // ============================================================
-    // REFRESH
-    // ============================================================
 
     @Test
     void shouldIssueNewAccessTokenOnRefresh() {
@@ -537,10 +542,6 @@ class AuthenticationServiceTest {
 
         verifyNoInteractions(accessTokenService);
     }
-
-    // ============================================================
-    // LOGOUT
-    // ============================================================
 
     @Test
     void shouldRevokeSessionAndRefreshTokensOnLogout() {
@@ -617,7 +618,8 @@ class AuthenticationServiceTest {
                 any(Customer.class),
                 anyString(),
                 anyString(),
-                anyString()
+                anyString(),
+                any()
         )).thenReturn(mock(LoginSession.class));
     }
 

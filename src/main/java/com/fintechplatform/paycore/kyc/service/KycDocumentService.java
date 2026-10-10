@@ -3,11 +3,13 @@ package com.fintechplatform.paycore.kyc.service;
 import com.fintechplatform.paycore.customer.exception.CustomerNotFoundException;
 import com.fintechplatform.paycore.customer.repository.CustomerRepository;
 import com.fintechplatform.paycore.kyc.dto.KycDocumentResponse;
+import com.fintechplatform.paycore.kyc.dto.KycDocumentSummary;
 import com.fintechplatform.paycore.kyc.entity.KycDocument;
 import com.fintechplatform.paycore.kyc.entity.KycProfile;
 import com.fintechplatform.paycore.kyc.enums.KycDocumentType;
 import com.fintechplatform.paycore.kyc.exception.InvalidKycDocumentException;
 import com.fintechplatform.paycore.kyc.exception.InvalidKycStateException;
+import com.fintechplatform.paycore.kyc.exception.KycDocumentNotFoundException;
 import com.fintechplatform.paycore.kyc.exception.KycNotFoundException;
 import com.fintechplatform.paycore.kyc.repository.KycDocumentRepository;
 import com.fintechplatform.paycore.kyc.repository.KycProfileRepository;
@@ -19,12 +21,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.util.List;
 import java.util.UUID;
 
-/**
- * Uploads KYC document files. The bytes go to {@link KycDocumentStorage};
- * the database keeps only metadata and the storage key.
- */
 @Service
 public class KycDocumentService {
 
@@ -50,13 +49,45 @@ public class KycDocumentService {
         this.storage = storage;
     }
 
-    /**
-     * Only while KYC is IN_PROGRESS. The file type is detected from the
-     * content itself (PDF, PNG or JPEG); the client's file name and
-     * declared content type are not trusted. Uploading the same document
-     * type again keeps both, so a customer can send a clearer copy after
-     * an information request.
-     */
+    @Transactional(readOnly = true)
+    public List<KycDocumentSummary> documentsOf(UUID kycId) {
+
+        KycProfile profile =
+                kycProfileRepository
+                        .findById(kycId)
+                        .orElseThrow(KycNotFoundException::new);
+
+        return kycDocumentRepository
+                .findByKycProfileOrderByCreatedAtAscIdAsc(profile)
+                .stream()
+                .map(document -> new KycDocumentSummary(
+                        document.getId(),
+                        document.getDocumentType(),
+                        document.getDocumentNumber(),
+                        document.getCreatedAt()
+                ))
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public DocumentContent content(UUID documentId) {
+
+        KycDocument document =
+                kycDocumentRepository
+                        .findById(documentId)
+                        .orElseThrow(KycDocumentNotFoundException::new);
+
+        String key = document.getStorageKey();
+        String mediaType = key.endsWith(".pdf") ? "application/pdf"
+                : key.endsWith(".png") ? "image/png"
+                : "image/jpeg";
+
+        return new DocumentContent(storage.read(key), mediaType);
+    }
+
+    public record DocumentContent(byte[] bytes, String mediaType) {
+    }
+
     @Transactional
     public KycDocumentResponse upload(
             UUID customerId,
@@ -69,13 +100,7 @@ public class KycDocumentService {
             throw new InvalidKycDocumentException("Document type is required");
         }
 
-        if (documentNumber != null && documentNumber.length() > 255) {
-            throw new InvalidKycDocumentException(
-                    "Document number must not exceed 255 characters"
-            );
-        }
-
-        String extension = detectExtension(content);
+        requireValid(documentNumber, content);
 
         KycProfile profile =
                 kycProfileRepository
@@ -94,20 +119,7 @@ public class KycDocumentService {
             );
         }
 
-        String storageKey =
-                storage.store(profile.getId().toString(), extension, content);
-
-        deleteFileIfTransactionRollsBack(storageKey);
-
-        KycDocument document =
-                kycDocumentRepository.save(
-                        KycDocument.create(
-                                profile,
-                                documentType,
-                                storageKey,
-                                blankToNull(documentNumber)
-                        )
-                );
+        KycDocument document = store(profile, documentType, documentNumber, content);
 
         return new KycDocumentResponse(
                 document.getId(),
@@ -116,6 +128,42 @@ public class KycDocumentService {
                 profile.getStatus(),
                 document.getCreatedAt()
         );
+    }
+
+    @Transactional
+    public KycDocument store(
+            KycProfile profile,
+            KycDocumentType documentType,
+            String documentNumber,
+            byte[] content
+    ) {
+
+        String extension = requireValid(documentNumber, content);
+
+        String storageKey =
+                storage.store(profile.getId().toString(), extension, content);
+
+        deleteFileIfTransactionRollsBack(storageKey);
+
+        return kycDocumentRepository.save(
+                KycDocument.create(
+                        profile,
+                        documentType,
+                        storageKey,
+                        blankToNull(documentNumber)
+                )
+        );
+    }
+
+    private String requireValid(String documentNumber, byte[] content) {
+
+        if (documentNumber != null && documentNumber.length() > 255) {
+            throw new InvalidKycDocumentException(
+                    "Document number must not exceed 255 characters"
+            );
+        }
+
+        return detectExtension(content);
     }
 
     private String detectExtension(byte[] content) {
@@ -162,10 +210,6 @@ public class KycDocumentService {
         return true;
     }
 
-    /**
-     * The file is written before the row is committed; if the commit
-     * fails, remove the file so storage holds no orphans.
-     */
     private void deleteFileIfTransactionRollsBack(String storageKey) {
 
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {

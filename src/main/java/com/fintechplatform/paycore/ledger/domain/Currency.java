@@ -3,12 +3,6 @@ package com.fintechplatform.paycore.ledger.domain;
 import java.util.Locale;
 import java.util.Objects;
 
-/**
- * An ISO 4217 currency and how many minor units it has (2 for NGN: 100
- * kobo to the naira). Which currencies accounts may hold is decided when
- * the account is opened (paycore.accounts.supported-currencies); the ledger
- * only needs to know how to count them.
- */
 public record Currency(
         String code,
         int minorUnit
@@ -28,10 +22,6 @@ public record Currency(
         }
     }
 
-    /**
-     * The minor unit comes from the JDK's ISO 4217 data, so it is never
-     * hand-maintained here.
-     */
     public static Currency of(String code) {
 
         if (code == null || code.isBlank()) {
@@ -48,7 +38,6 @@ public record Currency(
             throw new IllegalArgumentException("Unknown currency: " + normalized);
         }
 
-        // -1 for things like gold (XAU) that have no minor unit.
         if (iso.getDefaultFractionDigits() < 0) {
             throw new IllegalArgumentException("Unsupported currency: " + normalized);
         }

@@ -7,15 +7,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-/**
- * Where the bank rail reports money other banks sent to PayCore accounts.
- * Not behind a sign-in: the rail authenticates with the request signature
- * instead (401 without a valid one).
- *
- * 200 ACCEPTED with the ledger reference, also for a repeated delivery of
- * the same session; 422 REJECTED when the account cannot take the money,
- * so the rail returns it to the sending bank.
- */
 @RestController
 @RequestMapping("/api/v1/webhooks/bank-rail")
 public class BankRailWebhookController {

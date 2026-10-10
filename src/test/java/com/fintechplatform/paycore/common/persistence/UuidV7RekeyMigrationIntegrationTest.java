@@ -14,12 +14,6 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Applies migrations up to V7, adds data that references the seeded v4
- * ids, then applies V8 and checks every id is v7 and no link was lost.
- * Runs Flyway directly (no Spring context) so the database can be
- * inspected between versions.
- */
 @Testcontainers
 class UuidV7RekeyMigrationIntegrationTest {
 

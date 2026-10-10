@@ -62,14 +62,12 @@ class AuthenticationControllerTest {
     @MockitoBean
     private AuthenticationService authenticationService;
 
-    // Google sign-in is covered by GoogleSignInIntegrationTest.
     @MockitoBean
     private GoogleSignInService googleSignInService;
 
     @MockitoBean
     private GoogleProperties googleProperties;
 
-    // Needed by CurrentUserJwtAuthenticationConverter, which this slice loads.
     @MockitoBean
     private LoginSessionRepository loginSessionRepository;
 
@@ -323,8 +321,6 @@ class AuthenticationControllerTest {
 
         UUID customerId = UUID.randomUUID();
 
-        // Filters are disabled in this slice, so populate the context
-        // that @AuthenticationPrincipal reads from directly.
         SecurityContextHolder.getContext().setAuthentication(
                 UsernamePasswordAuthenticationToken.authenticated(
                         new CurrentUser(customerId),

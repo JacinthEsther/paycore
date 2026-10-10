@@ -6,6 +6,7 @@ type Tone = 'neutral' | 'good' | 'warn' | 'bad' | 'info';
 
 const STATUS_TONES: Record<string, Tone> = {
   ACTIVE: 'good',
+  TRUSTED: 'good',
   VERIFIED: 'good',
   PASSED: 'good',
   PENDING_VERIFICATION: 'warn',
@@ -24,6 +25,20 @@ const STATUS_TONES: Record<string, Tone> = {
   CLOSED: 'bad',
   REJECTED: 'bad',
   FAILED: 'bad',
+  CREATED: 'info',
+  PROCESSING: 'info',
+  UNKNOWN: 'warn',
+  NEEDS_REVIEW: 'bad',
+  SUCCEEDED: 'good',
+  APPROVED: 'good',
+  MATCHED: 'good',
+  RESOLVED: 'good',
+  OPEN: 'warn',
+  NOT_REQUIRED: 'neutral',
+  AMOUNT_MISMATCH: 'warn',
+  STATUS_MISMATCH: 'warn',
+  MISSING_LOCAL: 'bad',
+  MISSING_PROVIDER: 'bad',
 };
 
 export function humanize(value: string) {
@@ -82,33 +97,24 @@ export function PageHeader({ eyebrow, title, children }: { eyebrow?: string; tit
   );
 }
 
-/** Shows an HTTP status the way the inspector does. */
 export function HttpStatus({ status }: { status: number | null }) {
   if (status === null) return <span className="http http-none">—</span>;
   const tone = status < 300 ? 'ok' : status < 500 ? 'client' : 'server';
   return <span className={`http http-${tone}`}>{status}</span>;
 }
 
-/** 0123456789 -> 012 345 6789, the way Nigerian account numbers are read out. */
 export function formatAccountNumber(value: string) {
   return value.replace(/^(\d{3})(\d{3})(\d{4})$/, '$1 $2 $3');
 }
 
-/** 20000.5, 'NGN' -> ₦20,000.50 */
 export function formatMoney(amount: number, currency: string) {
   return new Intl.NumberFormat('en-NG', { style: 'currency', currency }).format(amount);
 }
 
-/** Entries on PayCore's settlement account have no account number. */
 export function accountLabel(accountNumber: string | null) {
   return accountNumber ? formatAccountNumber(accountNumber) : 'PayCore settlement';
 }
 
-/**
- * A fresh idempotency key for one money-moving request. Resending the same
- * request with the same key returns the original result instead of moving
- * the money again.
- */
 export function newIdempotencyKey(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
@@ -118,10 +124,10 @@ export function formatDate(value: string | null | undefined) {
   return new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-/**
- * staff: the back office (ADMIN, OPERATIONS, SUPPORT). Otherwise the
- * banking app, which staff-only accounts (operations officers) cannot use.
- */
+export function formatDay(value: string) {
+  return new Date(value).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
 export function RequireAuth({ staff = false, children }: { staff?: boolean; children: ReactNode }) {
   const { session, isStaff, isCustomer } = useAuth();
   const location = useLocation();
@@ -134,7 +140,6 @@ export function RequireAuth({ staff = false, children }: { staff?: boolean; chil
   return <>{children}</>;
 }
 
-/** Initials for an avatar: "Esther Agboniro" -> "EA". */
 export function initials(name: string | null | undefined) {
   if (!name) return '?';
   return name
@@ -156,6 +161,7 @@ export function Avatar({ name, size = 'md' }: { name: string | null | undefined;
 const ICONS: Record<string, ReactNode> = {
   home: <path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z" />,
   send: <path d="M4 12h13M12 5l7 7-7 7" />,
+  bolt: <path d="M13 3 5 13.5h6L10 21l8-10.5h-6z" />,
   receive: <path d="M20 12H7M12 19l-7-7 7-7" />,
   plus: <path d="M12 5v14M5 12h14" />,
   list: <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />,
@@ -166,6 +172,7 @@ const ICONS: Record<string, ReactNode> = {
     </>
   ),
   shield: <path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z" />,
+  lock: <path d="M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3" />,
   bank: <path d="M3 10 12 4l9 6M5 10v8M9 10v8M15 10v8M19 10v8M3 20h18" />,
   card: (
     <>
@@ -233,7 +240,6 @@ export function Icon({ name, size = 20 }: { name: keyof typeof ICONS | string; s
   );
 }
 
-/** Copies text and briefly says so. */
 export function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) {
   async function copy(e: React.MouseEvent<HTMLButtonElement>) {
     const button = e.currentTarget;
@@ -242,7 +248,6 @@ export function CopyButton({ text, label = 'Copy' }: { text: string; label?: str
       button.dataset.copied = 'true';
       setTimeout(() => delete button.dataset.copied, 1500);
     } catch {
-      // Clipboard blocked (e.g. not https); the number is on screen anyway.
     }
   }
   return (

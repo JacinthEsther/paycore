@@ -1,12 +1,6 @@
 import type { ApiErrorBody, LoginResponse, TokenResponse } from './types';
 
-// Empty in development (Vite proxies /api); the API origin in production.
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
-
-// ---------------------------------------------------------------------------
-// Session: tokens live in sessionStorage, so each browser tab is its own
-// sign-in and closing the tab forgets them.
-// ---------------------------------------------------------------------------
 
 export interface Session {
   customerId: string;
@@ -43,7 +37,6 @@ export function setSession(next: Session | null) {
     if (next) sessionStorage.setItem(SESSION_KEY, JSON.stringify(next));
     else sessionStorage.removeItem(SESSION_KEY);
   } catch {
-    // Storage blocked: the session still works for this page load.
   }
   sessionListeners.forEach((listener) => listener(next));
 }
@@ -68,10 +61,22 @@ export function sessionFromLogin(response: LoginResponse): Session {
   };
 }
 
-// ---------------------------------------------------------------------------
-// API inspector: every call is recorded so the UI can show what the backend
-// actually did (status, auth header, timing, body).
-// ---------------------------------------------------------------------------
+const DEVICE_KEY = 'paycore.deviceId';
+let fallbackDeviceId: string | null = null;
+
+export function deviceId(): string {
+  try {
+    let id = localStorage.getItem(DEVICE_KEY);
+    if (!id) {
+      id = crypto.randomUUID();
+      localStorage.setItem(DEVICE_KEY, id);
+    }
+    return id;
+  } catch {
+    fallbackDeviceId ??= crypto.randomUUID();
+    return fallbackDeviceId;
+  }
+}
 
 export type AuthMode = 'bearer' | 'none' | { token: string; label: string };
 
@@ -113,10 +118,9 @@ function record(call: ApiCall) {
   callListeners.forEach((listener) => listener(calls));
 }
 
-const SECRET_FIELDS = new Set(['password', 'adminPassword']);
+const SECRET_FIELDS = new Set(['password', 'staffPassword']);
 const TOKEN_FIELDS = new Set(['accessToken', 'refreshToken', 'sessionToken']);
 
-/** Hides passwords, BVNs and NINs and shortens tokens before they are displayed. */
 function redact(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redact);
   if (value && typeof value === 'object') {
@@ -131,10 +135,6 @@ function redact(value: unknown): unknown {
   }
   return value;
 }
-
-// ---------------------------------------------------------------------------
-// Requests
-// ---------------------------------------------------------------------------
 
 export class ApiError extends Error {
   readonly status: number;
@@ -160,7 +160,6 @@ export interface RequestOptions {
   form?: FormData;
   auth?: AuthMode;
   headers?: Record<string, string>;
-  /** Show this instead of the real multipart body in the inspector. */
   formSummary?: unknown;
 }
 
@@ -168,8 +167,6 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   const auth = options.auth ?? 'bearer';
   const first = await send(path, options, auth);
 
-  // An expired access token is renewed once with the refresh token and the
-  // request is repeated. Deliberate unauthenticated calls are never retried.
   if (first.status === 401 && auth === 'bearer' && session?.refreshToken) {
     if (await refreshTokens()) {
       return unwrap<T>(await send(path, options, auth));
@@ -187,6 +184,9 @@ interface Sent {
 async function send(path: string, options: RequestOptions, auth: AuthMode): Promise<Sent> {
   const method = options.method ?? (options.body !== undefined || options.form ? 'POST' : 'GET');
   const headers: Record<string, string> = { Accept: 'application/json', ...options.headers };
+  if (path.startsWith('/api/v1/auth/login') || path.startsWith('/api/v1/auth/google')) {
+    headers['X-Device-Id'] = deviceId();
+  }
 
   let authLabel = 'none';
   if (auth === 'bearer' && session) {
@@ -239,6 +239,36 @@ async function send(path: string, options: RequestOptions, auth: AuthMode): Prom
   return { status, body: responseBody };
 }
 
+export async function openFile(path: string) {
+  const preview = window.open('', '_blank');
+  const started = performance.now();
+  const response = await fetch(`${API_BASE}${path}`, {
+    headers: session ? { Authorization: `Bearer ${session.accessToken}` } : {},
+  }).catch(() => null);
+
+  record({
+    id: nextCallId++,
+    at: new Date(),
+    method: 'GET',
+    path,
+    auth: session ? 'Bearer' : 'none',
+    status: response?.status ?? null,
+    ms: Math.round(performance.now() - started),
+    responseBody: response?.ok ? `(${response.headers.get('Content-Type')} file)` : undefined,
+  });
+
+  if (!response?.ok) {
+    preview?.close();
+    const body = response ? await response.json().catch(() => ({})) : {};
+    throw new ApiError(response?.status ?? 0, body);
+  }
+
+  const url = URL.createObjectURL(await response.blob());
+  if (preview) preview.location.href = url;
+  else window.location.assign(url);
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
 function unwrap<T>(sent: Sent): T {
   if (sent.status >= 200 && sent.status < 300) return sent.body as T;
   const body = sent.body && typeof sent.body === 'object' ? (sent.body as ApiErrorBody) : {};
@@ -247,7 +277,6 @@ function unwrap<T>(sent: Sent): T {
 
 let refreshing: Promise<boolean> | null = null;
 
-/** Single-flight: parallel 401s share one refresh (refresh tokens rotate). */
 function refreshTokens(): Promise<boolean> {
   refreshing ??= (async () => {
     const current = session;
@@ -273,10 +302,6 @@ function refreshTokens(): Promise<boolean> {
   });
   return refreshing;
 }
-
-// ---------------------------------------------------------------------------
-// JWT claims (decoded for display only; the server verifies the signature)
-// ---------------------------------------------------------------------------
 
 export interface AccessClaims {
   sub: string;
@@ -310,7 +335,6 @@ export function decodeClaims(token: string): AccessClaims | null {
 
 export function errorMessage(error: unknown): string {
   if (error instanceof ApiError) {
-    // KYC_INCOMPLETE already names the missing items in its message.
     const missing = error.body.missing ?? [];
     const unmentioned = missing.filter((item) => !error.message.includes(item));
     return unmentioned.length ? `${error.message}: ${unmentioned.join(', ')}` : error.message;

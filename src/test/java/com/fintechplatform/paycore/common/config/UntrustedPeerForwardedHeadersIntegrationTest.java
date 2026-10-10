@@ -21,12 +21,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Prod profile with the trusted-proxy list narrowed to a single load
- * balancer address (as SERVER_TOMCAT_REMOTEIP_INTERNALPROXIES would do in
- * production). The test client on loopback is now an ordinary, untrusted
- * client, so its X-Forwarded-For must be ignored.
- */
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("prod")

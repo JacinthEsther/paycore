@@ -2,6 +2,7 @@ package com.fintechplatform.paycore.ledger;
 
 import com.fintechplatform.paycore.ledger.domain.Counterparty;
 import com.fintechplatform.paycore.ledger.dto.request.TransferRequest;
+import com.fintechplatform.paycore.ledger.dto.response.TransactionResponse;
 import com.fintechplatform.paycore.ledger.exception.InsufficientFundsException;
 import com.fintechplatform.paycore.ledger.exception.TransactionNotReversibleException;
 import com.fintechplatform.paycore.ledger.service.InboundTransfer;
@@ -23,6 +24,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -49,11 +51,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/**
- * The ledger end to end against PostgreSQL: balanced entries, derived
- * balances, ownership, account states, idempotency, database constraints
- * and concurrent transfers.
- */
 @Testcontainers
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -77,6 +74,9 @@ class LedgerIntegrationTest {
 
     private static final AtomicInteger PHONES = new AtomicInteger(1_000_000);
 
+    private static final String TEST_DEVICE_ID = "integration-test-device";
+    private static final String TEST_PIN = "2580";
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -86,16 +86,18 @@ class LedgerIntegrationTest {
     @Autowired
     private LedgerService ledgerService;
 
-    /** An ADMIN (with LEDGER_POST) who funds accounts with deposits. */
+    @Autowired
+    private TransactionTemplate transactionTemplate;
+
     private Holder admin;
 
     @BeforeEach
     void cleanDatabase() throws Exception {
 
+        jdbcTemplate.execute("TRUNCATE ledger_entries, ledger_transactions CASCADE");
+
         for (String table : new String[]{
                 "operations_requests",
-                "ledger_entries",
-                "ledger_transactions",
                 "account_status_events",
                 "accounts",
                 "kyc_verifications",
@@ -111,19 +113,15 @@ class LedgerIntegrationTest {
             jdbcTemplate.execute("DELETE FROM " + table);
         }
 
-        admin = staff(activeHolder("admin"), "ADMIN");
+        admin = staff(activeHolder("admin"), "COMPLIANCE");
     }
-
-    // ============================================================
-    // A TRANSFER
-    // ============================================================
 
     @Test
     void transferShouldPostBalancedEntriesAndMoveTheBalances() throws Exception {
 
         Holder esther = activeHolder("esther");
         Holder john = activeHolder("john");
-        fund(esther, 10_000_000); // ₦100,000
+        fund(esther, 10_000_000);
 
         String body =
                 transfer(esther, john.accountNumber(), "20000.50", "transfer-0001", "Rent share")
@@ -149,7 +147,6 @@ class LedgerIntegrationTest {
         assertThat(balance(esther)).isEqualByComparingTo("79999.50");
         assertThat(balance(john)).isEqualByComparingTo("20000.50");
 
-        // Stored in kobo, positive, and debits equal credits.
         assertThat(jdbcTemplate.queryForList(
                 "SELECT entry_type, amount_minor FROM ledger_entries "
                         + "WHERE transaction_id = ?::uuid ORDER BY entry_type",
@@ -186,10 +183,6 @@ class LedgerIntegrationTest {
 
         assertThat(balance(esther)).isEqualByComparingTo("0.00");
     }
-
-    // ============================================================
-    // SECURITY
-    // ============================================================
 
     @Test
     void anonymousCallersShouldBeRejected() throws Exception {
@@ -228,7 +221,6 @@ class LedgerIntegrationTest {
         Holder mallory = activeHolder("mallory");
         fund(esther, 100_000);
 
-        // Mallory names Esther's account as the source.
         mockMvc.perform(authorized(post("/api/v1/ledger/accounts/{id}/transfers", esther.accountId()), mallory.token())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(transferBody(mallory.accountNumber(), "10", "transfer-0005", null)))
@@ -254,7 +246,6 @@ class LedgerIntegrationTest {
         String id = JsonPath.read(body, "$.id");
         String reference = JsonPath.read(body, "$.reference");
 
-        // Sender and recipient.
         for (Holder involved : List.of(esther, john)) {
             mockMvc.perform(authorized(get("/api/v1/ledger/transactions/{id}", id), involved.token()))
                     .andExpect(status().isOk())
@@ -265,7 +256,6 @@ class LedgerIntegrationTest {
                     .andExpect(jsonPath("$.id").value(id));
         }
 
-        // Anyone else: indistinguishable from a transaction that does not exist.
         mockMvc.perform(authorized(get("/api/v1/ledger/transactions/{id}", id), mallory.token()))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("TRANSACTION_NOT_FOUND"));
@@ -281,10 +271,6 @@ class LedgerIntegrationTest {
                 .andExpect(jsonPath("$.error").value("ACCOUNT_NOT_FOUND"));
     }
 
-    // ============================================================
-    // ACCOUNT STATE, CURRENCY AND FUNDS
-    // ============================================================
-
     @ParameterizedTest
     @ValueSource(strings = {"PENDING", "FROZEN", "CLOSED"})
     void sourceAccountMustBeActive(String status) throws Exception {
@@ -298,7 +284,7 @@ class LedgerIntegrationTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("INVALID_ACCOUNT_STATE"));
 
-        assertThat(transactionCount()).isEqualTo(1); // only the funding
+        assertThat(transactionCount()).isEqualTo(1);
     }
 
     @ParameterizedTest
@@ -344,13 +330,12 @@ class LedgerIntegrationTest {
 
         Holder esther = activeHolder("esther");
         Holder john = activeHolder("john");
-        fund(esther, 100_000); // ₦1,000
+        fund(esther, 100_000);
 
         transfer(esther, john.accountNumber(), "1000.01", "transfer-0010", null)
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.error").value("INSUFFICIENT_FUNDS"));
 
-        // Exactly the balance is fine.
         transfer(esther, john.accountNumber(), "1000.00", "transfer-0011", null)
                 .andExpect(status().isCreated());
 
@@ -364,21 +349,17 @@ class LedgerIntegrationTest {
         Holder esther = activeHolder("esther");
         fund(esther, 100_000);
 
-        // To yourself.
         transfer(esther, esther.accountNumber(), "10", "transfer-0012", null)
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("INVALID_TRANSACTION"));
 
-        // To an account that does not exist.
         transfer(esther, "0000000000", "10", "transfer-0013", null)
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("ACCOUNT_NOT_FOUND"));
 
-        // More decimal places than kobo: rejected, never rounded.
         transfer(esther, admin.accountNumber(), "10.005", "transfer-0014", null)
                 .andExpect(status().isBadRequest());
 
-        // Zero and negative amounts, malformed account number, short key.
         transfer(esther, admin.accountNumber(), "0", "transfer-0015", null)
                 .andExpect(status().isBadRequest());
         transfer(esther, admin.accountNumber(), "-5", "transfer-0016", null)
@@ -390,10 +371,6 @@ class LedgerIntegrationTest {
 
         assertThat(balance(esther)).isEqualByComparingTo("1000.00");
     }
-
-    // ============================================================
-    // IDEMPOTENCY
-    // ============================================================
 
     @Test
     void retryWithTheSameKeyShouldReturnTheOriginalAndMoveMoneyOnce() throws Exception {
@@ -417,7 +394,7 @@ class LedgerIntegrationTest {
 
         assertThat(balance(esther)).isEqualByComparingTo("750.00");
         assertThat(balance(john)).isEqualByComparingTo("250.00");
-        assertThat(transactionCount()).isEqualTo(2); // funding + one transfer
+        assertThat(transactionCount()).isEqualTo(2);
     }
 
     @Test
@@ -431,7 +408,6 @@ class LedgerIntegrationTest {
         transfer(esther, john.accountNumber(), "250", "transfer-reuse", null)
                 .andExpect(status().isCreated());
 
-        // Different amount, recipient or description under the same key.
         transfer(esther, john.accountNumber(), "300", "transfer-reuse", null)
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("IDEMPOTENCY_KEY_REUSED"));
@@ -459,7 +435,6 @@ class LedgerIntegrationTest {
                         .andExpect(status().isCreated())
                         .andReturn().getResponse().getContentAsString();
 
-        // John's identical key is his own: a new transfer, not Esther's replayed.
         String second =
                 transfer(john, esther.accountNumber(), "40", "shared-key-1", null)
                         .andExpect(status().isCreated())
@@ -470,17 +445,12 @@ class LedgerIntegrationTest {
         assertThat(balance(john)).isEqualByComparingTo("1060.00");
     }
 
-    // ============================================================
-    // DATABASE CONSTRAINTS
-    // ============================================================
-
     @Test
     void databaseShouldEnforceLedgerInvariants() throws Exception {
 
         Holder esther = activeHolder("esther");
         String transactionId = fund(esther, 100);
 
-        // Amounts are positive; direction is the entry type.
         assertThatThrownBy(() -> insertEntry(transactionId, esther.accountId(), "CREDIT", 0, "NGN"))
                 .isInstanceOf(DataIntegrityViolationException.class);
 
@@ -490,24 +460,19 @@ class LedgerIntegrationTest {
         assertThatThrownBy(() -> insertEntry(transactionId, esther.accountId(), "REFUND", 100, "NGN"))
                 .isInstanceOf(DataIntegrityViolationException.class);
 
-        // An entry's currency must be its transaction's and its account's.
         assertThatThrownBy(() -> insertEntry(transactionId, esther.accountId(), "CREDIT", 100, "USD"))
                 .isInstanceOf(DataIntegrityViolationException.class);
 
-        // Every entry belongs to a real transaction and account.
         assertThatThrownBy(() -> insertEntry(UUID.randomUUID().toString(), esther.accountId(), "CREDIT", 100, "NGN"))
                 .isInstanceOf(DataIntegrityViolationException.class);
 
-        // References are unique.
         String reference = jdbcTemplate.queryForObject(
                 "SELECT reference FROM ledger_transactions WHERE id = ?::uuid", String.class, transactionId
         );
         assertThatThrownBy(() -> insertTransaction(reference, "another-key"))
                 .isInstanceOf(DataIntegrityViolationException.class);
 
-        // Idempotency keys are unique per initiating customer. (Inbound
-        // transfers have no initiator; their rail session id is unique instead.)
-        insertTransaction("TXN-UNIQUE-REF-1", "same-key-0001");
+        insertBalancedTransaction("TXN-UNIQUE-REF-1", "same-key-0001", esther);
         assertThatThrownBy(() -> insertTransaction("TXN-UNIQUE-REF-2", "same-key-0001"))
                 .isInstanceOf(DataIntegrityViolationException.class);
 
@@ -525,19 +490,14 @@ class LedgerIntegrationTest {
                 .hasMessageContaining("uk_ledger_transactions_provider_payment");
     }
 
-    // ============================================================
-    // CONCURRENCY
-    // ============================================================
-
     @Test
     void concurrentTransfersMustNotSpendTheSameMoneyTwice() throws Exception {
 
         Holder esther = activeHolder("esther");
         Holder john = activeHolder("john");
         Holder ada = activeHolder("ada");
-        fund(esther, 10_000_000); // ₦100,000
+        fund(esther, 10_000_000);
 
-        // Two ₦80,000 transfers at once: only one can fit.
         List<Callable<Object>> tasks = List.of(
                 () -> serviceTransfer(esther, john, "80000", "race-0001"),
                 () -> serviceTransfer(esther, ada, "80000", "race-0002")
@@ -560,8 +520,6 @@ class LedgerIntegrationTest {
         fund(esther, 1_000_000);
         fund(john, 1_000_000);
 
-        // A -> B and B -> A at the same time lock the same two rows; the
-        // fixed lock order is what keeps this from deadlocking.
         List<Callable<Object>> tasks = new ArrayList<>();
         for (int i = 0; i < 20; i++) {
             String key = "cross-" + String.format("%04d", i);
@@ -576,7 +534,6 @@ class LedgerIntegrationTest {
         assertThat(balance(esther)).isEqualByComparingTo("10000.00");
         assertThat(balance(john)).isEqualByComparingTo("10000.00");
 
-        // The whole ledger still balances: every debit has its credit.
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT SUM(CASE WHEN entry_type = 'CREDIT' THEN amount_minor ELSE -amount_minor END) "
                         + "FROM ledger_entries",
@@ -584,9 +541,237 @@ class LedgerIntegrationTest {
         )).isZero();
     }
 
-    // ============================================================
-    // STATEMENTS
-    // ============================================================
+    @Test
+    void concurrentRetriesOfOneRequestShouldMoveMoneyOnce() throws Exception {
+
+        Holder esther = activeHolder("esther");
+        Holder john = activeHolder("john");
+        fund(esther, 1_000_000);
+
+        List<Callable<Object>> tasks = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            tasks.add(() -> serviceTransfer(esther, john, "2500", "retry-storm-0001"));
+        }
+
+        List<Object> outcomes = runTogether(tasks);
+
+        assertThat(outcomes).noneMatch(o -> o instanceof Throwable);
+        assertThat(outcomes)
+                .extracting(o -> ((TransactionResponse) o).id())
+                .containsOnly(((TransactionResponse) outcomes.getFirst()).id());
+
+        assertThat(balance(esther)).isEqualByComparingTo("7500.00");
+        assertThat(balance(john)).isEqualByComparingTo("2500.00");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM ledger_transactions WHERE type = 'TRANSFER'", Integer.class
+        )).isEqualTo(1);
+    }
+
+    @Test
+    void manyConcurrentTransfersShouldNeverOverdrawTheAccount() throws Exception {
+
+        Holder esther = activeHolder("esther");
+        List<Holder> recipients = List.of(activeHolder("john"), activeHolder("ada"), activeHolder("bola"));
+        fund(esther, 10_000_000);
+
+        List<Callable<Object>> tasks = new ArrayList<>();
+        for (int i = 0; i < 40; i++) {
+            Holder to = recipients.get(i % recipients.size());
+            String key = "drain-" + String.format("%04d", i);
+            tasks.add(() -> serviceTransfer(esther, to, "3000", key));
+        }
+
+        List<Object> outcomes = runTogether(tasks);
+
+        assertThat(outcomes).filteredOn(o -> !(o instanceof Throwable)).hasSize(33);
+        assertThat(outcomes).filteredOn(o -> o instanceof InsufficientFundsException).hasSize(7);
+
+        assertThat(balance(esther)).isEqualByComparingTo("1000.00");
+
+        BigDecimal received = BigDecimal.ZERO;
+        for (Holder recipient : recipients) {
+            received = received.add(balance(recipient));
+        }
+        assertThat(received).isEqualByComparingTo("99000.00");
+    }
+
+    @Test
+    void aNotificationDeliveredManyTimesAtOnceShouldBeCreditedOnce() throws Exception {
+
+        Holder esther = activeHolder("esther");
+        String sessionId = "session-" + UUID.randomUUID();
+
+        List<Callable<Object>> tasks = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            tasks.add(() -> ledgerService.receiveInboundTransfer(new InboundTransfer(
+                    "TESTRAIL", sessionId, esther.accountNumber(), new BigDecimal("5000"), "NGN",
+                    new Counterparty("Chiamaka Obi", "Test Bank", "7000000001"), null
+            )));
+        }
+
+        List<Object> outcomes = runTogether(tasks);
+
+        assertThat(outcomes).noneMatch(o -> o instanceof Throwable);
+        assertThat(balance(esther)).isEqualByComparingTo("5000.00");
+        assertThat(transactionCount()).isEqualTo(1);
+    }
+
+    @Test
+    void twoApprovedReversalsOfOneTransactionShouldReverseItOnce() throws Exception {
+
+        Holder esther = activeHolder("esther");
+        Holder john = activeHolder("john");
+        fund(esther, 100_000);
+        String transfer = transferId(esther, john, "400", "to-reverse-0001");
+
+        Holder officer = staff(activeHolder("officer"), "OPERATIONS_OFFICER");
+        Holder supervisor = staff(activeHolder("supervisor"), "OPERATIONS_SUPERVISOR");
+
+        List<Callable<Object>> tasks = new ArrayList<>();
+        for (int i = 0; i < 2; i++) {
+            String key = "race-reverse-" + i;
+            tasks.add(() -> ledgerService.reverse(
+                    UUID.fromString(officer.customerId()), UUID.fromString(supervisor.customerId()),
+                    UUID.fromString(transfer), "Sent in error", null, key
+            ));
+        }
+
+        List<Object> outcomes = runTogether(tasks);
+
+        assertThat(outcomes).filteredOn(o -> !(o instanceof Throwable)).hasSize(1);
+        assertThat(outcomes).filteredOn(o -> o instanceof TransactionNotReversibleException).hasSize(1);
+        assertThat(balance(esther)).isEqualByComparingTo("1000.00");
+        assertThat(balance(john)).isEqualByComparingTo("0.00");
+    }
+
+    @Test
+    void booksShouldBalanceAfterAMixedConcurrentWorkload() throws Exception {
+
+        Holder esther = activeHolder("esther");
+        Holder john = activeHolder("john");
+        Holder ada = activeHolder("ada");
+        fund(esther, 5_000_000);
+        fund(john, 5_000_000);
+
+        List<Callable<Object>> tasks = new ArrayList<>();
+        for (int i = 0; i < 30; i++) {
+            String key = "mixed-" + String.format("%04d", i);
+            tasks.add(switch (i % 5) {
+                case 0 -> () -> fund(ada, 12_345);
+                case 1 -> () -> serviceTransfer(esther, john, "1500", key);
+                case 2 -> () -> serviceTransfer(john, ada, "700", key);
+                case 3 -> () -> sendToOtherBank(esther, "999.99", key);
+                default -> () -> serviceTransfer(ada, esther, "50", key);
+            });
+        }
+
+        runTogether(tasks);
+
+        assertThat(jdbcTemplate.queryForList(
+                "SELECT transaction_id FROM ledger_entries GROUP BY transaction_id "
+                        + "HAVING SUM(CASE WHEN entry_type = 'DEBIT' THEN amount_minor ELSE -amount_minor END) <> 0"
+        )).isEmpty();
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT SUM(CASE WHEN entry_type = 'CREDIT' THEN amount_minor ELSE -amount_minor END) "
+                        + "FROM ledger_entries",
+                Long.class
+        )).isZero();
+
+        BigDecimal owed = balance(esther).add(balance(john)).add(balance(ada));
+        assertThat(settlementBalance()).isEqualByComparingTo(owed);
+        assertThat(balance(esther).signum()).isNotNegative();
+        assertThat(balance(john).signum()).isNotNegative();
+        assertThat(balance(ada).signum()).isNotNegative();
+    }
+
+    @Test
+    void postedEntriesShouldNeverChangeEvenWhenReversed() throws Exception {
+
+        Holder esther = activeHolder("esther");
+        Holder john = activeHolder("john");
+        fund(esther, 100_000);
+        String transfer = transferId(esther, john, "250", "immutable-0001");
+
+        String snapshot =
+                "SELECT id::text || entry_type || amount_minor || account_id::text || created_at::text "
+                        + "FROM ledger_entries WHERE transaction_id = ?::uuid ORDER BY id";
+        List<String> before = jdbcTemplate.queryForList(snapshot, String.class, transfer);
+
+        reverseThroughOperations(transfer);
+
+        assertThat(jdbcTemplate.queryForList(snapshot, String.class, transfer)).isEqualTo(before);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT status FROM ledger_transactions WHERE id = ?::uuid", String.class, transfer
+        )).isEqualTo("REVERSED");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM ledger_entries e JOIN ledger_transactions t ON t.id = e.transaction_id "
+                        + "WHERE t.reverses_transaction_id = ?::uuid",
+                Integer.class, transfer
+        )).isEqualTo(2);
+    }
+
+    @Test
+    void databaseShouldRefuseToRewriteLedgerHistory() throws Exception {
+
+        Holder esther = activeHolder("esther");
+        Holder john = activeHolder("john");
+        fund(esther, 100_000);
+        String transfer = transferId(esther, john, "250", "rewrite-0001");
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "UPDATE ledger_entries SET amount_minor = 1 WHERE transaction_id = ?::uuid", transfer))
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .hasMessageContaining("append-only");
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "DELETE FROM ledger_entries WHERE transaction_id = ?::uuid", transfer))
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .hasMessageContaining("append-only");
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "UPDATE ledger_transactions SET description = 'edited' WHERE id = ?::uuid", transfer))
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .hasMessageContaining("immutable");
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "DELETE FROM ledger_transactions WHERE id = ?::uuid", transfer))
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .hasMessageContaining("cannot be deleted");
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "UPDATE ledger_transactions SET status = 'INITIATED', posted_at = NULL WHERE id = ?::uuid", transfer))
+                .isInstanceOf(DataIntegrityViolationException.class);
+
+        reverseThroughOperations(transfer);
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "UPDATE ledger_transactions SET status = 'POSTED', reversed_at = NULL WHERE id = ?::uuid", transfer))
+                .isInstanceOf(DataIntegrityViolationException.class);
+
+        assertThat(balance(esther)).isEqualByComparingTo("1000.00");
+    }
+
+    @Test
+    void databaseShouldRefuseAnUnbalancedTransaction() throws Exception {
+
+        Holder esther = activeHolder("esther");
+        fund(esther, 100);
+        int before = transactionCount();
+
+        assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(status -> {
+            String transactionId = insertTransaction("TXN-UNBALANCED-1", "unbalanced-0001");
+            insertEntry(transactionId, settlementAccountId(), "DEBIT", 100, "NGN");
+            insertEntry(transactionId, esther.accountId(), "CREDIT", 99, "NGN");
+        }))
+                .hasStackTraceContaining("does not balance");
+
+        assertThatThrownBy(() -> insertTransaction("TXN-EMPTY-1", "empty-0001"))
+                .hasStackTraceContaining("does not balance");
+
+        assertThat(transactionCount()).isEqualTo(before);
+        assertThat(balance(esther)).isEqualByComparingTo("1.00");
+    }
 
     @Test
     void statementShouldShowOpeningClosingTotalsAndRunningBalances() throws Exception {
@@ -594,13 +779,13 @@ class LedgerIntegrationTest {
         Holder esther = activeHolder("esther");
         Holder john = activeHolder("john");
 
-        backdate(fund(esther, 100_000), "2026-08-15T10:00:00Z");                  // +1000 before
+        backdate(fund(esther, 100_000), "2026-08-15T10:00:00Z");
         String transfer = transferId(esther, john, "200", "stmt-transfer");
-        backdate(transfer, "2026-09-02T09:00:00Z");                               // -200
-        backdate(fund(esther, 50_000), "2026-09-10T12:00:00Z");                   // +500
+        backdate(transfer, "2026-09-02T09:00:00Z");
+        backdate(fund(esther, 50_000), "2026-09-10T12:00:00Z");
         String withdrawal = sendToOtherBank(esther, "100", "stmt-outbound");
-        backdate(withdrawal, "2026-09-20T08:00:00Z");                             // -100
-        backdate(fund(esther, 5_000), "2026-10-01T09:00:00Z");                    // +50 after
+        backdate(withdrawal, "2026-09-20T08:00:00Z");
+        backdate(fund(esther, 5_000), "2026-10-01T09:00:00Z");
 
         statement(esther, "?from=2026-09-01&to=2026-09-30")
                 .andExpect(status().isOk())
@@ -652,7 +837,6 @@ class LedgerIntegrationTest {
                 .andExpect(jsonPath("$.page.totalPages").value(2))
                 .andExpect(jsonPath("$.page.hasNext").value(true));
 
-        // Page 1 starts from the opening balance plus page 0, without it.
         statement(esther, "?from=2026-09-01&to=2026-09-30&size=2&page=1")
                 .andExpect(jsonPath("$.lines", hasSize(1)))
                 .andExpect(jsonPath("$.lines[0].amount").value(100.0))
@@ -661,7 +845,6 @@ class LedgerIntegrationTest {
                 .andExpect(jsonPath("$.closingBalance").value(1200.0))
                 .andExpect(jsonPath("$.page.hasNext").value(false));
 
-        // Past the end: no lines, same totals.
         statement(esther, "?from=2026-09-01&to=2026-09-30&size=2&page=5")
                 .andExpect(jsonPath("$.lines", hasSize(0)))
                 .andExpect(jsonPath("$.closingBalance").value(1200.0));
@@ -672,9 +855,8 @@ class LedgerIntegrationTest {
 
         Holder esther = activeHolder("esther");
 
-        // 23:30 UTC is 00:30 the next day in Lagos (UTC+1).
-        backdate(fund(esther, 1_000), "2026-08-31T23:30:00Z");    // ₦10, 1 Sep in Lagos
-        backdate(fund(esther, 10_000), "2026-09-30T23:30:00Z");   // ₦100, 1 Oct in Lagos
+        backdate(fund(esther, 1_000), "2026-08-31T23:30:00Z");
+        backdate(fund(esther, 10_000), "2026-09-30T23:30:00Z");
 
         statement(esther, "?from=2026-09-01&to=2026-09-30")
                 .andExpect(jsonPath("$.openingBalance").value(0.0))
@@ -699,7 +881,6 @@ class LedgerIntegrationTest {
         String original = transferId(esther, john, "300", "stmt-reversed");
         reverseThroughOperations(original);
 
-        // No dates: month to date, which includes everything just posted.
         statement(esther, "")
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.lines", hasSize(3)))
@@ -738,7 +919,6 @@ class LedgerIntegrationTest {
                         get("/api/v1/admin/ledger/accounts/{id}/statement", esther.accountId()), esther.token()))
                 .andExpect(status().isForbidden());
 
-        // System accounts have no statement here.
         mockMvc.perform(authorized(
                         get("/api/v1/admin/ledger/accounts/{id}/statement", settlementAccountId()), admin.token()))
                 .andExpect(status().isNotFound());
@@ -746,9 +926,9 @@ class LedgerIntegrationTest {
 
     @ParameterizedTest
     @ValueSource(strings = {
-            "?from=2026-09-10&to=2026-09-01",   // backwards
-            "?from=2025-01-01&to=2026-09-30",   // longer than a year
-            "?from=01-09-2026",                 // not an ISO date
+            "?from=2026-09-10&to=2026-09-01",
+            "?from=2025-01-01&to=2026-09-30",
+            "?from=01-09-2026",
             "?size=0",
             "?size=201",
             "?page=-1"
@@ -759,10 +939,6 @@ class LedgerIntegrationTest {
 
         statement(esther, query).andExpect(status().isBadRequest());
     }
-
-    // ============================================================
-    // HELPERS
-    // ============================================================
 
     private record Holder(
             String email,
@@ -776,17 +952,13 @@ class LedgerIntegrationTest {
         }
     }
 
-    /**
-     * A customer with verified KYC and an ACTIVE NGN account. KYC review
-     * and activation have their own tests; here they are set directly.
-     */
     private Holder activeHolder(String name) throws Exception {
 
         String email = name + "@example.com";
         String customerId = register(email, "0802" + PHONES.incrementAndGet());
 
         jdbcTemplate.update(
-                "UPDATE kyc_profiles SET status = 'VERIFIED' WHERE customer_id = ?::uuid",
+                "UPDATE kyc_profiles SET status = 'VERIFIED', tier = 3 WHERE customer_id = ?::uuid",
                 customerId
         );
 
@@ -806,10 +978,6 @@ class LedgerIntegrationTest {
         return new Holder(email, customerId, accountId, JsonPath.read(account, "$.accountNumber"), token);
     }
 
-    /**
-     * Grants a role directly (role management has its own tests) and signs
-     * in again so the token carries its permissions.
-     */
     private Holder staff(Holder holder, String role) throws Exception {
 
         jdbcTemplate.update(
@@ -822,10 +990,6 @@ class LedgerIntegrationTest {
         return holder.withToken(login(holder.email()));
     }
 
-    /**
-     * Puts money into an account the way it really arrives: a transfer
-     * from another bank, reported by the rail. Returns the transaction id.
-     */
     private String fund(Holder holder, long kobo) {
 
         return ledgerService.receiveInboundTransfer(new InboundTransfer(
@@ -839,7 +1003,6 @@ class LedgerIntegrationTest {
         )).id().toString();
     }
 
-    /** Money out to another bank (the rail is not involved at this level). */
     private String sendToOtherBank(Holder holder, String amount, String key) {
 
         return ledgerService.postOutbound(
@@ -852,11 +1015,10 @@ class LedgerIntegrationTest {
         ).id().toString();
     }
 
-    /** A reversal requested by one operations officer and approved by another. */
     private void reverseThroughOperations(String transactionId) throws Exception {
 
-        Holder officer = staff(activeHolder("officer"), "OPERATIONS");
-        Holder supervisor = staff(activeHolder("supervisor"), "OPERATIONS");
+        Holder officer = staff(activeHolder("officer"), "OPERATIONS_OFFICER");
+        Holder supervisor = staff(activeHolder("supervisor"), "OPERATIONS_SUPERVISOR");
 
         ledgerService.reverse(
                 UUID.fromString(officer.customerId()),
@@ -874,17 +1036,32 @@ class LedgerIntegrationTest {
                 get("/api/v1/ledger/accounts/" + holder.accountId() + "/statement" + query), holder.token()));
     }
 
-    /** Moves a transaction's entries to a fixed moment, for statements. */
     private void backdate(String transactionId, String instant) {
 
-        jdbcTemplate.update(
+        asLedgerMaintenance(() -> jdbcTemplate.update(
                 "UPDATE ledger_entries SET created_at = ?::timestamptz WHERE transaction_id = ?::uuid",
                 instant,
                 transactionId
-        );
+        ));
     }
 
-    /** Transfers and returns the transaction id. */
+    private void asLedgerMaintenance(Runnable work) {
+
+        transactionTemplate.executeWithoutResult(status -> {
+            jdbcTemplate.execute("SET LOCAL paycore.ledger_maintenance = 'on'");
+            work.run();
+        });
+    }
+
+    private void insertBalancedTransaction(String reference, String idempotencyKey, Holder holder) {
+
+        transactionTemplate.executeWithoutResult(status -> {
+            String transactionId = insertTransaction(reference, idempotencyKey);
+            insertEntry(transactionId, settlementAccountId(), "DEBIT", 100, "NGN");
+            insertEntry(transactionId, holder.accountId(), "CREDIT", 100, "NGN");
+        });
+    }
+
     private String transferId(Holder from, Holder to, String amount, String key) throws Exception {
 
         return JsonPath.read(
@@ -895,7 +1072,6 @@ class LedgerIntegrationTest {
         );
     }
 
-    /** The NGN settlement account's balance: money PayCore holds. */
     private BigDecimal settlementBalance() throws Exception {
 
         String body =
@@ -974,10 +1150,6 @@ class LedgerIntegrationTest {
         );
     }
 
-    /**
-     * Starts every task at the same moment and returns each result, or the
-     * exception it threw.
-     */
     private List<Object> runTogether(List<Callable<Object>> tasks) throws Exception {
 
         ExecutorService pool = Executors.newFixedThreadPool(Math.min(tasks.size(), 8));
@@ -1058,7 +1230,9 @@ class LedgerIntegrationTest {
     }
 
     private MockHttpServletRequestBuilder authorized(MockHttpServletRequestBuilder request, String token) {
-        return request.header("Authorization", "Bearer " + token);
+        return request
+                .header("Authorization", "Bearer " + token)
+                .header("X-Transaction-PIN", TEST_PIN);
     }
 
     private String register(String email, String phone) throws Exception {
@@ -1088,6 +1262,7 @@ class LedgerIntegrationTest {
 
         String response =
                 mockMvc.perform(post("/api/v1/auth/login")
+                                .header("X-Device-Id", TEST_DEVICE_ID)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("""
                                         {
@@ -1100,6 +1275,16 @@ class LedgerIntegrationTest {
                         .getResponse()
                         .getContentAsString();
 
-        return JsonPath.read(response, "$.accessToken");
+        String token = JsonPath.read(response, "$.accessToken");
+        withTransactionPin(token);
+        return token;
+    }
+
+    private void withTransactionPin(String token) throws Exception {
+
+        mockMvc.perform(post("/api/v1/security/pin")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{ \"pin\": \"" + TEST_PIN + "\" }"));
     }
 }

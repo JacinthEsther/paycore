@@ -11,18 +11,6 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
-/**
- * A customer's financial account. It identifies the account; it is not
- * the ledger, so it has no balance. Every monetary movement will be a
- * ledger entry against this account instead.
- *
- * There are no setters: the account number, owner and currency never
- * change, and the status only moves through the transition methods.
- *
- * System accounts (see {@link AccountType#isSystem()}) are PayCore's own
- * side of the ledger. They have no customer and no account number, and
- * are created by the ledger, never through {@link #open}.
- */
 @Entity
 @Table(
         name = "accounts",
@@ -42,12 +30,10 @@ public class Account {
     @UuidV7
     private UUID id;
 
-    /** Null only for system accounts. */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "customer_id", updatable = false)
     private Customer customer;
 
-    /** Null only for system accounts. */
     @Column(name = "account_number", length = 10, updatable = false)
     private String accountNumber;
 
@@ -77,11 +63,6 @@ public class Account {
     protected Account() {
     }
 
-    /**
-     * Opens a PENDING account. It cannot be used until activated, which is
-     * where eligibility (verified KYC) is checked. One open account per
-     * type and currency is enforced by the database.
-     */
     public static Account open(
             Customer customer,
             String accountNumber,
@@ -117,10 +98,6 @@ public class Account {
         return account;
     }
 
-    /**
-     * PENDING -> ACTIVE, once the customer has passed the eligibility
-     * checks.
-     */
     public void activate() {
 
         if (status != AccountStatus.PENDING) {
@@ -131,10 +108,6 @@ public class Account {
         touch();
     }
 
-    /**
-     * ACTIVE -> FROZEN. A frozen account keeps its history but will not be
-     * allowed to move money.
-     */
     public void freeze() {
 
         if (status != AccountStatus.ACTIVE) {
@@ -145,9 +118,6 @@ public class Account {
         touch();
     }
 
-    /**
-     * FROZEN -> ACTIVE.
-     */
     public void unfreeze() {
 
         if (status != AccountStatus.FROZEN) {
@@ -158,10 +128,6 @@ public class Account {
         touch();
     }
 
-    /**
-     * Any open status -> CLOSED, which is final. Once the ledger exists,
-     * closing will also require a zero balance and no pending holds.
-     */
     public void close() {
 
         if (status == AccountStatus.CLOSED) {

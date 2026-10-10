@@ -40,13 +40,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/**
- * Money in and out of PayCore through the (simulated) interbank rail, end
- * to end against PostgreSQL: the signed inbound webhook, the Test Bank
- * simulator, name enquiry, outbound transfers with automatic reversal of
- * rejected payments, idempotency, concurrency, and the settlement account
- * staying equal to what PayCore owes its customers.
- */
 @Testcontainers
 @SpringBootTest(properties = {
         "paycore.rails.provider=simulated",
@@ -74,6 +67,9 @@ class BankTransferIntegrationTest {
 
     private static final AtomicInteger PHONES = new AtomicInteger(5_000_000);
 
+    private static final String TEST_DEVICE_ID = "integration-test-device";
+    private static final String TEST_PIN = "2580";
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -86,10 +82,10 @@ class BankTransferIntegrationTest {
     @BeforeEach
     void cleanDatabase() {
 
+        jdbcTemplate.execute("TRUNCATE ledger_entries, ledger_transactions CASCADE");
+
         for (String table : new String[]{
                 "operations_requests",
-                "ledger_entries",
-                "ledger_transactions",
                 "account_status_events",
                 "accounts",
                 "kyc_verifications",
@@ -106,10 +102,6 @@ class BankTransferIntegrationTest {
             jdbcTemplate.execute("DELETE FROM " + table);
         }
     }
-
-    // ============================================================
-    // INBOUND: THE RAIL WEBHOOK
-    // ============================================================
 
     @Test
     void signedNotificationShouldCreditTheAccountAgainstSettlement() throws Exception {
@@ -140,7 +132,6 @@ class BankTransferIntegrationTest {
                 .containsEntry("counterparty_name", "Chiamaka Obi")
                 .containsEntry("counterparty_bank", "Test Bank");
 
-        // The customer sees who sent it.
         mockMvc.perform(authorized(get("/api/v1/ledger/accounts/{id}/statement", esther.accountId()), esther.token()))
                 .andExpect(jsonPath("$.lines[0].transactionType").value("INBOUND_TRANSFER"))
                 .andExpect(jsonPath("$.lines[0].description").value("Rent share"))
@@ -163,7 +154,6 @@ class BankTransferIntegrationTest {
         assertThat(balance(esther)).isEqualByComparingTo("1000");
         assertThat(transactionCount()).isEqualTo(1);
 
-        // The same session with a different amount is not believed.
         webhook(notification("SESSION-0002", esther.accountNumber(), "9000", null))
                 .andExpect(status().isConflict());
 
@@ -188,7 +178,6 @@ class BankTransferIntegrationTest {
                         .content(body))
                 .andExpect(status().isUnauthorized());
 
-        // Signed, then tampered with.
         String signature = InboundWebhookService.sign(SECRET, body);
 
         mockMvc.perform(post("/api/v1/webhooks/bank-rail/inbound")
@@ -231,10 +220,6 @@ class BankTransferIntegrationTest {
         assertThat(transactionCount()).isZero();
     }
 
-    // ============================================================
-    // INBOUND: THE TEST BANK SIMULATOR
-    // ============================================================
-
     @Test
     void customerShouldSendThemselvesMoneyFromTheirTestBankAccount() throws Exception {
 
@@ -258,7 +243,6 @@ class BankTransferIntegrationTest {
 
         assertThat(balance(esther)).isEqualByComparingTo("3000");
 
-        // Test Bank only sends pretend money up to its limit per account.
         fromTestBank(esther, esther.accountNumber(), "2000.01")
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.error").value("SIMULATOR_LIMIT_EXCEEDED"));
@@ -267,10 +251,6 @@ class BankTransferIntegrationTest {
 
         assertThat(balance(esther)).isEqualByComparingTo("5000");
     }
-
-    // ============================================================
-    // NAME ENQUIRY
-    // ============================================================
 
     @Test
     void nameEnquiryShouldNameTheAccountHolder() throws Exception {
@@ -289,7 +269,6 @@ class BankTransferIntegrationTest {
                 .andExpect(jsonPath("$.accountName").value("Test Holder"))
                 .andExpect(jsonPath("$.bankName").value("PayCore"));
 
-        // Their own Test Bank account carries their own name.
         nameEnquiry(esther, "999001", testBank.accountNumberFor(UUID.fromString(esther.customerId())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accountName").value("Test Holder"));
@@ -302,10 +281,6 @@ class BankTransferIntegrationTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("UNKNOWN_BANK"));
     }
-
-    // ============================================================
-    // OUTBOUND
-    // ============================================================
 
     @Test
     void outboundTransferShouldDebitTheCustomerAndPayThroughTheRail() throws Exception {
@@ -340,7 +315,6 @@ class BankTransferIntegrationTest {
                         .andExpect(jsonPath("$.reversalReference").value(startsWith("TXN-")))
                         .andReturn().getResponse().getContentAsString();
 
-        // The customer has their money back; the history shows both.
         assertThat(balance(esther)).isEqualByComparingTo("1000");
         assertThat(settlementBalance()).isEqualByComparingTo("1000");
 
@@ -350,7 +324,6 @@ class BankTransferIntegrationTest {
                 .andExpect(jsonPath("$.lines[2].transactionType").value("REVERSAL"))
                 .andExpect(jsonPath("$.lines[2].direction").value("CREDIT"));
 
-        // The rail made the reversal, not staff: no staff note, no approver.
         assertThat(jdbcTemplate.queryForMap(
                 "SELECT initiated_by::text AS by, staff_note, approved_by, provider FROM ledger_transactions "
                         + "WHERE reference = ?",
@@ -361,7 +334,6 @@ class BankTransferIntegrationTest {
                 .containsEntry("approved_by", null)
                 .containsEntry("provider", "SIMULATED");
 
-        // A retry reports the same failed transfer and pays nothing.
         sendOut(esther, "4123456789", "100.99", "out-0002")
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.transferStatus").value("FAILED"))
@@ -393,19 +365,16 @@ class BankTransferIntegrationTest {
 
         Holder esther = funded("esther", "1000");
 
-        // Over budget: refused before anything is sent.
         sendOut(esther, "4123456789", "1000.01", "out-0004")
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.error").value("INSUFFICIENT_FUNDS"));
 
-        // Unknown beneficiary: refused before anything is debited.
         sendOut(esther, "0001234567", "10", "out-0005")
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.error").value("BENEFICIARY_NOT_FOUND"));
 
         assertThat(balance(esther)).isEqualByComparingTo("1000");
 
-        // Two ₦800 transfers at once: only one fits.
         List<Callable<Object>> tasks = new ArrayList<>();
         for (int i = 0; i < 2; i++) {
             String key = "out-race-" + i;
@@ -448,7 +417,7 @@ class BankTransferIntegrationTest {
         Holder john = funded("john", "500");
 
         sendOut(esther, "4123456789", "100", "out-0009");
-        sendOut(john, "4123456789", "50.99", "out-0010");   // rejected and reversed
+        sendOut(john, "4123456789", "50.99", "out-0010");
         mockMvc.perform(authorized(post("/api/v1/ledger/accounts/{id}/transfers", esther.accountId()), esther.token())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -460,16 +429,11 @@ class BankTransferIntegrationTest {
         assertThat(balance(esther).add(balance(john))).isEqualByComparingTo(settlementBalance());
         assertThat(settlementBalance()).isEqualByComparingTo("1400");
 
-        // And the whole ledger balances.
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT SUM(CASE WHEN entry_type = 'CREDIT' THEN amount_minor ELSE -amount_minor END) FROM ledger_entries",
                 Long.class
         )).isZero();
     }
-
-    // ============================================================
-    // HELPERS
-    // ============================================================
 
     private record Holder(String email, String customerId, String accountId, String accountNumber, String token) {
     }
@@ -479,7 +443,7 @@ class BankTransferIntegrationTest {
         String email = name + "@example.com";
         String customerId = register(email, "0805" + PHONES.incrementAndGet());
 
-        jdbcTemplate.update("UPDATE kyc_profiles SET status = 'VERIFIED' WHERE customer_id = ?::uuid", customerId);
+        jdbcTemplate.update("UPDATE kyc_profiles SET status = 'VERIFIED', tier = 3 WHERE customer_id = ?::uuid", customerId);
 
         String token = login(email);
 
@@ -497,7 +461,6 @@ class BankTransferIntegrationTest {
         return new Holder(email, customerId, accountId, JsonPath.read(account, "$.accountNumber"), token);
     }
 
-    /** An active customer with money that arrived from another bank. */
     private Holder funded(String name, String amount) throws Exception {
 
         Holder holder = activeHolder(name);
@@ -574,7 +537,6 @@ class BankTransferIntegrationTest {
         return new BigDecimal(String.valueOf((Object) JsonPath.read(body, "$.balance")));
     }
 
-    /** Money PayCore holds at its bank: debits minus credits on settlement. */
     private BigDecimal settlementBalance() {
 
         Long minor = jdbcTemplate.queryForObject(
@@ -619,7 +581,9 @@ class BankTransferIntegrationTest {
     }
 
     private MockHttpServletRequestBuilder authorized(MockHttpServletRequestBuilder request, String token) {
-        return request.header("Authorization", "Bearer " + token);
+        return request
+                .header("Authorization", "Bearer " + token)
+                .header("X-Transaction-PIN", TEST_PIN);
     }
 
     private String register(String email, String phone) throws Exception {
@@ -647,6 +611,7 @@ class BankTransferIntegrationTest {
 
         String response =
                 mockMvc.perform(post("/api/v1/auth/login")
+                                .header("X-Device-Id", TEST_DEVICE_ID)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("""
                                         { "email": "%s", "password": "Password123" }
@@ -654,6 +619,16 @@ class BankTransferIntegrationTest {
                         .andExpect(status().isOk())
                         .andReturn().getResponse().getContentAsString();
 
-        return JsonPath.read(response, "$.accessToken");
+        String token = JsonPath.read(response, "$.accessToken");
+        withTransactionPin(token);
+        return token;
+    }
+
+    private void withTransactionPin(String token) throws Exception {
+
+        mockMvc.perform(post("/api/v1/security/pin")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{ \"pin\": \"" + TEST_PIN + "\" }"));
     }
 }

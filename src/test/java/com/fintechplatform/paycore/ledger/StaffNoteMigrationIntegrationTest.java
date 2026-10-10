@@ -14,13 +14,6 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Applies migrations up to V20, when staff reasons were stored as the
- * customer-facing description, then applies V21 and checks every reason
- * moved to staff_note and customers are left with a neutral description.
- * Runs Flyway directly (no Spring context) so the database can be
- * inspected between versions.
- */
 @Testcontainers
 class StaffNoteMigrationIntegrationTest {
 
@@ -72,7 +65,6 @@ class StaffNoteMigrationIntegrationTest {
                 .containsEntry("description", "Deposit")
                 .containsEntry("staff_note", "Cash received at Ikeja branch");
 
-        // A reason that was never recorded still satisfies the new rule.
         assertThat(row(withdrawal))
                 .containsEntry("description", "Withdrawal")
                 .containsEntry("staff_note", "Recorded before staff notes were separated");
@@ -81,7 +73,6 @@ class StaffNoteMigrationIntegrationTest {
                 .containsEntry("description", "Reversal of TXN-DEP")
                 .containsEntry("staff_note", "Fraud confirmed by compliance");
 
-        // Customer transfers are the customer's own words: untouched.
         assertThat(row(transfer))
                 .containsEntry("description", "Rent share")
                 .containsEntry("staff_note", null);

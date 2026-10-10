@@ -4,12 +4,6 @@ import com.fintechplatform.paycore.kyc.enums.KycVerificationType;
 
 import java.time.Instant;
 
-/**
- * Too many identity-number checks of one type (BVN, or NIN) from one
- * client network in the rolling window, across all customers.
- * {@code retryAfter} is when the oldest counted check from that network
- * leaves the window.
- */
 public class BvnIpRateLimitExceededException extends RuntimeException {
 
     private final Instant retryAfter;

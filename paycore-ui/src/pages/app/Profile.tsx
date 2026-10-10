@@ -64,6 +64,18 @@ export function Profile() {
               {kycStatus && kycStatus !== 'NONE' ? <StatusBadge status={kycStatus} /> : 'Start'} ›
             </Link>
           </li>
+          {kycStatus === 'VERIFIED' && (
+            <li>
+              <Icon name="list" />
+              <div>
+                <strong>Tier &amp; limits</strong>
+                <span className="muted small">See your tier, what you can send, and upgrade</span>
+              </div>
+              <Link to="/app/limits" className="row-link">
+                Open ›
+              </Link>
+            </li>
+          )}
           {account && (
             <li>
               <Icon name="bank" />
@@ -78,6 +90,16 @@ export function Profile() {
           )}
           <li>
             <Icon name="shield" />
+            <div>
+              <strong>PIN & devices</strong>
+              <span className="muted small">Transaction PIN and where you are signed in</span>
+            </div>
+            <Link to="/app/devices" className="row-link">
+              Open ›
+            </Link>
+          </li>
+          <li>
+            <Icon name="code" />
             <div>
               <strong>Security checks</strong>
               <span className="muted small">See the API refuse what you are not allowed to do</span>

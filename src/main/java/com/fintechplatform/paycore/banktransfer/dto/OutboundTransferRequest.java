@@ -8,14 +8,6 @@ import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
 
-/**
- * A transfer from one of the caller's accounts (in the path) to an
- * account at another bank. The beneficiary's name is not sent: PayCore
- * looks it up with the bank (name enquiry) and records what the bank says.
- *
- * Retrying with the same idempotency key returns the original transfer
- * without paying again.
- */
 public record OutboundTransferRequest(
 
         @NotBlank(message = "Bank code is required")

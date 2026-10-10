@@ -1,6 +1,5 @@
 package com.fintechplatform.paycore.banktransfer.rail;
 
-/** Whether the beneficiary bank accepted the payment, and why not if it did not. */
 public record RailResult(boolean accepted, String reason) {
 
     public static RailResult success() {

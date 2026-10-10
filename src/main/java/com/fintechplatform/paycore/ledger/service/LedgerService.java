@@ -33,6 +33,8 @@ import com.fintechplatform.paycore.ledger.exception.LedgerTransactionNotFoundExc
 import com.fintechplatform.paycore.ledger.exception.TransactionNotReversibleException;
 import com.fintechplatform.paycore.ledger.repository.LedgerEntryRepository;
 import com.fintechplatform.paycore.ledger.repository.LedgerTransactionRepository;
+import com.fintechplatform.paycore.limits.exception.BalanceLimitExceededException;
+import com.fintechplatform.paycore.limits.service.SpendingLimitService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -52,32 +54,6 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
 
-/**
- * Moves money through the double-entry ledger.
- *
- * Every operation is two entries of the same amount, a debit and a credit.
- * Customer money only ever moves between two customer accounts or between
- * a customer account and PayCore's settlement account, the real money
- * PayCore holds at its bank:
- *
- * <pre>
- * transfer           DEBIT sender customer   CREDIT recipient customer
- * card top-up        DEBIT settlement        CREDIT customer
- * inbound transfer   DEBIT settlement        CREDIT customer
- * outbound transfer  DEBIT customer          CREDIT settlement
- * adjustment         either way against settlement (maker-checker)
- * reversal           the original with the sides swapped
- * </pre>
- *
- * Nobody can put money into an account by typing an amount: it arrives
- * because a provider or another bank says it did, and staff corrections
- * need two officers.
- *
- * PostgreSQL is the consistency boundary: an operation is one database
- * transaction that locks the customer accounts involved, checks balances
- * under that lock, and inserts the transaction and its entries. Either all
- * of it commits or none of it does.
- */
 @Service
 public class LedgerService {
 
@@ -93,30 +69,21 @@ public class LedgerService {
     private final LedgerTransactionRepository transactionRepository;
     private final LedgerEntryRepository entryRepository;
     private final AccountRepository accountRepository;
+    private final SpendingLimitService spendingLimits;
     private final SecureRandom random = new SecureRandom();
 
     public LedgerService(
             LedgerTransactionRepository transactionRepository,
             LedgerEntryRepository entryRepository,
-            AccountRepository accountRepository
+            AccountRepository accountRepository,
+            SpendingLimitService spendingLimits
     ) {
         this.transactionRepository = transactionRepository;
         this.entryRepository = entryRepository;
         this.accountRepository = accountRepository;
+        this.spendingLimits = spendingLimits;
     }
 
-    // ============================================================
-    // CUSTOMER TRANSFERS INSIDE PAYCORE
-    // ============================================================
-
-    /**
-     * Transfers from one of the customer's accounts to any active PayCore
-     * customer account in the same currency.
-     *
-     * Retrying with the same idempotency key and identical details returns
-     * the original transaction and moves no money; the same key with
-     * different details is refused.
-     */
     @Transactional
     public TransactionResponse transfer(
             UUID customerId,
@@ -128,7 +95,6 @@ public class LedgerService {
         String idempotencyKey = request.idempotencyKey().trim();
         String description = normalize(request.description());
 
-        // The id only: the account itself is first read under its lock.
         UUID destinationAccountId =
                 accountRepository
                         .findIdByAccountNumber(request.destinationAccountNumber())
@@ -153,7 +119,6 @@ public class LedgerService {
                         )
                 );
 
-        // Fast path for a retry of a transfer that already went through.
         Optional<Posted> replay = replay(posting);
 
         if (replay.isPresent()) {
@@ -170,9 +135,6 @@ public class LedgerService {
         Account source = accounts.source();
         Account destination = accounts.destination();
 
-        // Checked again under the lock: a concurrent duplicate of this
-        // request that locked the source first has committed by now, and
-        // this one must return its result rather than move money again.
         replay = replay(posting);
 
         if (replay.isPresent()) {
@@ -182,28 +144,12 @@ public class LedgerService {
         requireCanSend(source, amount.currency());
         requireCanReceive(destination, amount.currency());
         requireFunds(source, amount);
+        spendingLimits.requireWithinLimits(source, amount);
+        spendingLimits.requireCanHold(destination, balanceOf(destination), amount, false);
 
         return toResponse(record(posting, source, destination, null));
     }
 
-    // ============================================================
-    // CARD TOP-UPS THROUGH A PAYMENT PROVIDER
-    // ============================================================
-    //
-    // The caller charges the provider between the two steps, outside any
-    // database transaction, so no row lock is held while the provider
-    // answers:
-    //
-    //   checkFunding   repeat of an earlier top-up? else may this one go ahead?
-    //   (provider)     takes the payment, or declines it
-    //   postFunding    credits the account, checking everything again
-
-    /**
-     * The top-up this key already paid for, if this is an exact repeat;
-     * otherwise empty once the top-up is allowed: the account is the
-     * customer's own, active, in the currency, and within its limit.
-     * Nothing is locked; postFunding checks it all again under the lock.
-     */
     @Transactional(readOnly = true)
     public Optional<TransactionResponse> checkFunding(
             UUID customerId,
@@ -231,11 +177,6 @@ public class LedgerService {
         return Optional.empty();
     }
 
-    /**
-     * Credits the payment the provider confirmed. A retry of a top-up that
-     * already posted returns it; the same provider payment is never
-     * credited twice (the database refuses a second one).
-     */
     @Transactional
     public TransactionResponse postFunding(
             UUID customerId,
@@ -254,8 +195,6 @@ public class LedgerService {
             return toResponse(replay.get());
         }
 
-        // The lock also serializes top-ups to the account, so two at once
-        // cannot both fit under the limit.
         Account account =
                 accountRepository
                         .findByIdAndCustomerIdForUpdate(accountId, customerId)
@@ -276,10 +215,6 @@ public class LedgerService {
         );
     }
 
-    /**
-     * How much more the customer can add to their own account by card.
-     * provider is null when no card provider is configured.
-     */
     @Transactional(readOnly = true)
     public FundingAllowanceResponse getFundingAllowance(
             UUID customerId,
@@ -337,10 +272,6 @@ public class LedgerService {
         );
     }
 
-    /**
-     * Active, in the currency, and with room under the card limit. On the
-     * locked account, the funded total cannot change before commit.
-     */
     private void requireCanFund(Account account, Money amount, FundingTerms terms) {
 
         requireOwnActive(account, "receive");
@@ -352,27 +283,14 @@ public class LedgerService {
         if (funded.add(amount).isGreaterThan(limit)) {
             throw new FundingLimitExceededException(limit, remaining(limit, funded));
         }
+
+        spendingLimits.requireCanHold(account, balanceOf(account), amount, true);
     }
 
-    /** Zero, not negative, if the limit was lowered below what was funded. */
     private static Money remaining(Money limit, Money funded) {
         return funded.isGreaterThanOrEqualTo(limit) ? Money.ofMinor(0, limit.currency()) : limit.subtract(funded);
     }
 
-    // ============================================================
-    // TRANSFERS IN FROM OTHER BANKS
-    // ============================================================
-
-    /**
-     * Credits a transfer another bank sent, as the bank rail reported it
-     * (DEBIT settlement, CREDIT customer). The rail's session id makes it
-     * idempotent: a notification delivered twice is credited once and the
-     * second delivery gets the same transaction back.
-     *
-     * @throws InboundTransferRejectedException when the account cannot
-     *         take the money (unknown, not active, wrong currency), so the
-     *         rail returns it to the sending bank
-     */
     @Transactional
     public TransactionResponse receiveInboundTransfer(InboundTransfer inbound) {
 
@@ -396,8 +314,6 @@ public class LedgerService {
                         .filter(found -> !found.isSystemAccount())
                         .orElseThrow(() -> new InboundTransferRejectedException("Account number not found"));
 
-        // A concurrent delivery of the same session committed while this
-        // one waited for the lock.
         previous = transactionRepository.findByProviderAndProviderReference(inbound.provider(), inbound.sessionId());
 
         if (previous.isPresent()) {
@@ -410,6 +326,12 @@ public class LedgerService {
 
         if (!account.getCurrency().equals(amount.currency().code())) {
             throw new InboundTransferRejectedException("Account does not hold " + amount.currency().code());
+        }
+
+        try {
+            spendingLimits.requireCanHold(account, balanceOf(account), amount, false);
+        } catch (BalanceLimitExceededException exceeded) {
+            throw new InboundTransferRejectedException("Account balance limit exceeded");
         }
 
         String description =
@@ -438,16 +360,11 @@ public class LedgerService {
         return toResponse(record(posting, settlement, account, null));
     }
 
-    /**
-     * Total minor units credited to the account by inbound transfers from
-     * the given provider that still stand. For a simulator's own limit.
-     */
     @Transactional(readOnly = true)
     public long inboundTotal(UUID accountId, String provider) {
         return entryRepository.calculateInboundReceived(accountId, provider);
     }
 
-    /** The same session reported again must carry the same transfer. */
     private Posted sameInbound(LedgerTransaction previous, InboundTransfer inbound, Money amount) {
 
         Posted posted = posted(previous);
@@ -470,37 +387,6 @@ public class LedgerService {
         return posted;
     }
 
-    // ============================================================
-    // TRANSFERS OUT TO OTHER BANKS
-    // ============================================================
-    //
-    // Like any bank: the customer is debited first, then the rail is asked
-    // to pay the other bank. If the rail rejects the payment, the debit is
-    // reversed automatically and the customer has their money back.
-    //
-    //   findOutbound          a retry of a transfer already sent? return it
-    //   postOutbound          DEBIT customer, CREDIT settlement, under the lock
-    //   (rail)                pays the beneficiary bank, or rejects
-    //   reverseRejectedOutbound   only on rejection: the money goes back
-
-    /**
-     * The outbound transfer this customer already made with the key, if
-     * any. The details are compared again when it is posted.
-     */
-    @Transactional(readOnly = true)
-    public Optional<TransactionResponse> findOutbound(UUID customerId, String idempotencyKey) {
-
-        return transactionRepository
-                .findByInitiatedByAndIdempotencyKey(customerId, idempotencyKey.trim())
-                .filter(found -> found.getType() == LedgerTransactionType.OUTBOUND_TRANSFER)
-                .map(this::toResponse);
-    }
-
-    /**
-     * Debits the customer for a transfer to another bank. The beneficiary
-     * is the one name enquiry confirmed; sessionId is what the rail will
-     * be asked to pay under.
-     */
     @Transactional
     public TransactionResponse postOutbound(
             UUID customerId,
@@ -513,9 +399,56 @@ public class LedgerService {
         String description =
                 Objects.requireNonNullElse(normalize(outbound.narration()), "Transfer to " + outbound.beneficiary().name());
 
+        return postProviderDebit(
+                LedgerTransactionType.OUTBOUND_TRANSFER,
+                customerId,
+                sourceAccountId,
+                amount,
+                idempotencyKey,
+                description,
+                outbound.provider(),
+                reference -> LedgerTransaction.createOutboundTransfer(
+                        reference, amount.currency().code(), customerId, idempotencyKey, description,
+                        outbound.provider(), outbound.sessionId(), outbound.beneficiary()
+                )
+        );
+    }
+
+    @Transactional
+    public TransactionResponse postBillPayment(UUID customerId, UUID sourceAccountId, BillDebit bill) {
+
+        Money amount = parseAmount(bill.amount(), bill.currency());
+        String idempotencyKey = bill.idempotencyKey().trim();
+
+        return postProviderDebit(
+                LedgerTransactionType.BILL_PAYMENT,
+                customerId,
+                sourceAccountId,
+                amount,
+                idempotencyKey,
+                bill.description(),
+                bill.provider(),
+                reference -> LedgerTransaction.createBillPayment(
+                        reference, amount.currency().code(), customerId, idempotencyKey, bill.description(),
+                        bill.provider(), bill.requestId(), bill.biller()
+                )
+        );
+    }
+
+    private TransactionResponse postProviderDebit(
+            LedgerTransactionType type,
+            UUID customerId,
+            UUID sourceAccountId,
+            Money amount,
+            String idempotencyKey,
+            String description,
+            String provider,
+            Function<String, LedgerTransaction> create
+    ) {
+
         Posting posting =
                 new Posting(
-                        LedgerTransactionType.OUTBOUND_TRANSFER,
+                        type,
                         amount,
                         customerId,
                         idempotencyKey,
@@ -524,11 +457,8 @@ public class LedgerService {
                         sourceAccountId,
                         settlementIdOrNull(amount.currency()),
                         null,
-                        outbound.provider(),
-                        reference -> LedgerTransaction.createOutboundTransfer(
-                                reference, amount.currency().code(), customerId, idempotencyKey, description,
-                                outbound.provider(), outbound.sessionId(), outbound.beneficiary()
-                        )
+                        provider,
+                        create
                 );
 
         Optional<Posted> replay = replay(posting);
@@ -547,18 +477,13 @@ public class LedgerService {
 
         requireCanSend(source, amount.currency());
         requireFunds(source, amount);
+        spendingLimits.requireWithinLimits(source, amount);
 
         Account settlement = settlementAccount(amount.currency());
 
         return toResponse(record(posting.withAccounts(source.getId(), settlement.getId()), source, settlement, null));
     }
 
-    /**
-     * Gives the customer their money back after the rail rejected an
-     * outbound transfer: a REVERSAL with the sides swapped, made by the
-     * rail rather than staff, so it works on any account the money left.
-     * Reversing twice returns the first reversal.
-     */
     @Transactional
     public TransactionResponse reverseRejectedOutbound(UUID transactionId, String reason) {
 
@@ -567,8 +492,9 @@ public class LedgerService {
                         .findByIdForUpdate(transactionId)
                         .orElseThrow(LedgerTransactionNotFoundException::new);
 
-        if (original.getType() != LedgerTransactionType.OUTBOUND_TRANSFER) {
-            throw new IllegalArgumentException("Only an outbound transfer is reversed by the rail");
+        if (original.getType() != LedgerTransactionType.OUTBOUND_TRANSFER
+                && original.getType() != LedgerTransactionType.BILL_PAYMENT) {
+            throw new IllegalArgumentException("Only a payment to a provider is reversed by the provider");
         }
 
         Optional<LedgerTransaction> existing = transactionRepository.findByReversesTransactionId(transactionId);
@@ -582,7 +508,10 @@ public class LedgerService {
         Account settlement = single(entries, LedgerEntryType.CREDIT).getAccount();
         Money amount = amountOf(original, entries);
 
-        String description = "Reversal: transfer to " + original.getCounterparty().name() + " failed";
+        String description =
+                original.getType() == LedgerTransactionType.BILL_PAYMENT
+                        ? "Reversal: " + original.getCounterparty().name() + " payment failed"
+                        : "Reversal: transfer to " + original.getCounterparty().name() + " failed";
 
         log.info("Reversing outbound transfer {}: {}", original.getReference(), reason);
 
@@ -607,20 +536,6 @@ public class LedgerService {
         return toResponse(record(posting, settlement, customer, original));
     }
 
-    // ============================================================
-    // STAFF CORRECTIONS (MAKER-CHECKER)
-    // ============================================================
-    //
-    // Staff never move money on their own. An operations officer requests
-    // an adjustment or a reversal; a different officer approves it, and
-    // only then is it posted, recording both. Neither may hold an account
-    // the correction touches.
-
-    /**
-     * Whether an adjustment to the account could be requested at all, so
-     * a maker cannot queue one that is bound to fail. Checked again in
-     * full when it is approved.
-     */
     @Transactional(readOnly = true)
     public Account requireAdjustable(UUID officerId, UUID accountId, String currencyCode) {
 
@@ -637,7 +552,6 @@ public class LedgerService {
         return account;
     }
 
-    /** Whether a reversal of the transaction could be requested. */
     @Transactional(readOnly = true)
     public LedgerTransaction requireReversible(UUID officerId, UUID transactionId) {
 
@@ -658,11 +572,6 @@ public class LedgerService {
         return transaction;
     }
 
-    /**
-     * Posts an approved adjustment: CREDIT gives the customer money from
-     * settlement, DEBIT takes it back. The idempotency key is the request
-     * it came from, so approving twice posts once.
-     */
     @Transactional
     public StaffTransactionResponse postAdjustment(
             UUID requestedBy,
@@ -733,18 +642,6 @@ public class LedgerService {
         );
     }
 
-    /**
-     * Posts an approved reversal: the original's accounts and amount with
-     * the sides swapped. The original's entries are never touched; the
-     * original moves to REVERSED.
-     *
-     * Refused if the transaction is already reversed or is itself a
-     * reversal, if it touches either officer's own account, if an account
-     * involved is closed or still pending, or if the account being debited
-     * no longer holds the money. Frozen accounts may take part: pulling a
-     * fraudulent credit back out of a frozen account is what reversals are
-     * for.
-     */
     @Transactional
     public StaffTransactionResponse reverse(
             UUID requestedBy,
@@ -762,14 +659,11 @@ public class LedgerService {
             return toStaffResponse(sameReversal(previous.get(), transactionId));
         }
 
-        // Serializes reversals of the same transaction.
         LedgerTransaction original =
                 transactionRepository
                         .findByIdForUpdate(transactionId)
                         .orElseThrow(LedgerTransactionNotFoundException::new);
 
-        // Customer accounts in id order, as transfers lock them, so
-        // reversals and transfers cannot deadlock. Settlement is not locked.
         List<Account> locked =
                 entryRepository
                         .findCustomerAccountIds(transactionId)
@@ -797,7 +691,6 @@ public class LedgerService {
         LedgerEntry originalDebit = single(entries, LedgerEntryType.DEBIT);
         LedgerEntry originalCredit = single(entries, LedgerEntryType.CREDIT);
 
-        // The swap: whoever was credited is now debited, and vice versa.
         Account debitAccount = originalCredit.getAccount();
         Account creditAccount = originalDebit.getAccount();
         Money amount = amountOf(original, entries);
@@ -850,7 +743,6 @@ public class LedgerService {
         }
     }
 
-    /** Segregation of duties: nobody corrects their own money. */
     private static void requireNotOwnedBy(Account account, UUID officerId, String action) {
 
         if (account.isOwnedBy(officerId)) {
@@ -858,7 +750,6 @@ public class LedgerService {
         }
     }
 
-    /** Active or frozen: closed and pending accounts hold no money to correct. */
     private static void requireCorrectable(Account account) {
 
         if (account.getStatus() == AccountStatus.CLOSED || account.getStatus() == AccountStatus.PENDING) {
@@ -870,13 +761,6 @@ public class LedgerService {
         }
     }
 
-    // ============================================================
-    // BALANCES AND READS
-    // ============================================================
-
-    /**
-     * 404 unless the account is the customer's own.
-     */
     @Transactional(readOnly = true)
     public BalanceResponse getBalance(UUID customerId, UUID accountId) {
 
@@ -887,9 +771,6 @@ public class LedgerService {
         );
     }
 
-    /**
-     * Staff view of any customer account's balance.
-     */
     @Transactional(readOnly = true)
     public BalanceResponse getCustomerAccountBalance(UUID accountId) {
 
@@ -901,10 +782,6 @@ public class LedgerService {
         );
     }
 
-    /**
-     * PayCore's own accounts with their balances, for reconciliation. A
-     * settlement account only appears once money has moved in its currency.
-     */
     @Transactional(readOnly = true)
     public List<SystemAccountResponse> getSystemAccounts() {
 
@@ -924,10 +801,6 @@ public class LedgerService {
                 .toList();
     }
 
-    /**
-     * 404 unless the transaction touches one of the customer's accounts,
-     * as sender or recipient.
-     */
     @Transactional(readOnly = true)
     public TransactionResponse getTransaction(UUID customerId, UUID transactionId) {
 
@@ -938,10 +811,6 @@ public class LedgerService {
                 .orElseThrow(LedgerTransactionNotFoundException::new);
     }
 
-    /**
-     * Staff view of any transaction, including its staff note, e.g. to
-     * find one to reverse.
-     */
     @Transactional(readOnly = true)
     public StaffTransactionResponse getAnyTransaction(UUID transactionId) {
 
@@ -970,20 +839,6 @@ public class LedgerService {
                 .orElseThrow(LedgerTransactionNotFoundException::new);
     }
 
-    // ============================================================
-    // POSTING
-    // ============================================================
-
-    /**
-     * What an operation asks for: its type, amount, who asked, their
-     * idempotency key, the customer-facing description, the internal staff
-     * note, the accounts to debit and credit, for a reversal the
-     * transaction it undoes, and the provider that carried it. Compared
-     * field by field when a key is reused (a provider's own reference is
-     * not: a retry is recognised before the provider is asked again).
-     *
-     * create builds the transaction for the reference it is given.
-     */
     private record Posting(
             LedgerTransactionType type,
             Money amount,
@@ -1005,15 +860,9 @@ public class LedgerService {
         }
     }
 
-    /** A stored transaction with its entries, before it becomes a response. */
     private record Posted(LedgerTransaction transaction, List<LedgerEntry> entries) {
     }
 
-    /**
-     * Writes the transaction and its two entries, and for a reversal marks
-     * the original REVERSED in the same database transaction. The accounts
-     * have been validated and the customer ones locked by the caller.
-     */
     private Posted record(
             Posting posting,
             Account debitAccount,
@@ -1041,19 +890,14 @@ public class LedgerService {
             entryRepository.flush();
         } catch (DataIntegrityViolationException exception) {
 
-            // The same key raced in through a different lock (another
-            // account). The database kept only one.
             if (ConstraintViolations.violates(exception, IDEMPOTENCY_CONSTRAINT)) {
                 throw new IdempotencyConflictException();
             }
 
-            // Unreachable while the original is locked; the database's
-            // own guarantee that nothing is reversed twice.
             if (ConstraintViolations.violates(exception, REVERSAL_CONSTRAINT)) {
                 throw new TransactionNotReversibleException("Transaction has already been reversed");
             }
 
-            // The same provider payment reported twice; it was credited once.
             if (ConstraintViolations.violates(exception, PROVIDER_PAYMENT_CONSTRAINT)) {
                 throw new IdempotencyConflictException();
             }
@@ -1075,10 +919,6 @@ public class LedgerService {
         return new Posted(transaction, entries);
     }
 
-    /**
-     * The original transaction if this key was already used by the same
-     * person, provided the request is an exact repeat; otherwise refused.
-     */
     private Optional<Posted> replay(Posting posting) {
 
         Optional<LedgerTransaction> found =
@@ -1115,10 +955,6 @@ public class LedgerService {
         return Optional.of(new Posted(previous, entries));
     }
 
-    /**
-     * Looked up, never created: a request in a currency no account uses
-     * must not leave a settlement account behind.
-     */
     private UUID settlementIdOrNull(Currency currency) {
 
         return accountRepository
@@ -1127,11 +963,6 @@ public class LedgerService {
                 .orElse(null);
     }
 
-    /**
-     * The settlement account for the currency, created on first use. The
-     * currency has already been checked against a customer account, so
-     * only currencies PayCore supports ever get one.
-     */
     private Account settlementAccount(Currency currency) {
 
         return accountRepository
@@ -1147,15 +978,6 @@ public class LedgerService {
                 });
     }
 
-    // ============================================================
-    // LOCKING AND CHECKS
-    // ============================================================
-
-    /**
-     * Locks both accounts, always in the same (id) order whichever way the
-     * money flows, so A -> B and B -> A running at once cannot deadlock.
-     * The source is only found if it belongs to the customer.
-     */
     private AccountPair lockAccounts(UUID customerId, UUID sourceAccountId, UUID destinationAccountId) {
 
         boolean sourceFirst = sourceAccountId.compareTo(destinationAccountId) < 0;
@@ -1193,7 +1015,6 @@ public class LedgerService {
         requireCurrency(account, currency);
     }
 
-    /** For the customer's own account, whose status they may see. */
     private static void requireOwnActive(Account account, String action) {
 
         if (account.getStatus() != AccountStatus.ACTIVE) {
@@ -1204,9 +1025,6 @@ public class LedgerService {
         }
     }
 
-    /**
-     * Does not say what state someone else's account is in.
-     */
     private void requireCanReceive(Account account, Currency currency) {
 
         if (account.getStatus() != AccountStatus.ACTIVE) {
@@ -1223,10 +1041,6 @@ public class LedgerService {
         }
     }
 
-    /**
-     * Every debit from a customer account needs that account's lock, which
-     * the caller holds, so the balance cannot drop before commit.
-     */
     private void requireFunds(Account account, Money amount) {
 
         if (balanceOf(account) < amount.amountMinor()) {
@@ -1245,16 +1059,6 @@ public class LedgerService {
         return amount;
     }
 
-    // ============================================================
-    // HELPERS
-    // ============================================================
-
-    /**
-     * Balance in minor units on the account's normal side. Customer
-     * accounts are what PayCore owes the customer: credits add, debits
-     * subtract. The settlement account is money PayCore holds: debits add,
-     * credits subtract. Either way a healthy balance is never negative.
-     */
     private long balanceOf(Account account) {
 
         long creditsMinusDebits = entryRepository.calculateBalance(account.getId(), account.getCurrency());
@@ -1309,12 +1113,6 @@ public class LedgerService {
         return description.trim();
     }
 
-    /**
-     * TXN-20260930-8F3A2C91D0B47E15: the UTC date for people, then 64
-     * random bits. At a million transfers a day the chance of any same-day
-     * collision is about 1 in 37 million per day; the unique constraint is
-     * the backstop if it ever happens.
-     */
     private String generateReference() {
 
         byte[] suffix = new byte[8];
@@ -1338,10 +1136,6 @@ public class LedgerService {
         return toResponse(posted(transaction));
     }
 
-    /**
-     * Staff only: adds the internal staff note, who initiated the
-     * transaction and who approved it.
-     */
     private StaffTransactionResponse toStaffResponse(Posted posted) {
 
         return new StaffTransactionResponse(
@@ -1352,10 +1146,6 @@ public class LedgerService {
         );
     }
 
-    /**
-     * What customers see. Built only from customer-facing fields; the staff
-     * note has no place in TransactionResponse.
-     */
     private TransactionResponse toResponse(Posted posted) {
 
         LedgerTransaction transaction = posted.transaction();
@@ -1394,7 +1184,6 @@ public class LedgerService {
         );
     }
 
-    /** The account holder's name, as a receipt shows it; "PayCore" for its own accounts. */
     static String accountName(Account account) {
 
         Customer customer = account.getCustomer();

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
+import { DESKS, staffRoleOf } from '../staff';
 import { ApiInspector } from './ApiInspector';
 import { JourneyBar } from './JourneyBar';
 import { Avatar, Icon } from './ui';
@@ -28,7 +29,6 @@ function Brand({ to = '/', subtitle }: { to?: string; subtitle?: string }) {
   );
 }
 
-/** The walkthrough, behind a button instead of on every screen. */
 function GuideButton() {
   const [open, setOpen] = useState(false);
   return (
@@ -46,7 +46,7 @@ function GuideButton() {
               </button>
             </header>
             <p className="muted small">
-              Try PayCore end to end: as a customer, as the compliance admin, and as two operations officers.
+              Try PayCore end to end: as a customer, then as each person in the back office: Support, Compliance, an Operations Officer and Supervisor, and the System Admin.
             </p>
             <div onClick={() => setOpen(false)}>
               <JourneyBar />
@@ -67,10 +67,6 @@ function useSignOut() {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Public pages: landing, sign in, register.
-// ---------------------------------------------------------------------------
-
 export function PublicLayout() {
   const { session, isStaff, isCustomer } = useAuth();
 
@@ -90,7 +86,7 @@ export function PublicLayout() {
               <Link className="btn btn-ghost btn-sm" to="/login">
                 Sign in
               </Link>
-              <Link className="btn btn-primary btn-sm" to="/register">
+              <Link className="btn btn-primary btn-sm hide-narrow" to="/register">
                 Open an account
               </Link>
             </>
@@ -105,14 +101,11 @@ export function PublicLayout() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// The banking app: sidebar on desktop, tab bar on phones.
-// ---------------------------------------------------------------------------
-
-const CUSTOMER_NAV: { to: string; label: string; icon: string; end?: boolean }[] = [
+const CUSTOMER_NAV: { to: string; label: string; icon: string; end?: boolean; tabBar?: boolean }[] = [
   { to: '/app', label: 'Home', icon: 'home', end: true },
   { to: '/app/transfer', label: 'Transfer', icon: 'send' },
   { to: '/app/add-money', label: 'Add money', icon: 'plus' },
+  { to: '/app/bills', label: 'Pay bills', icon: 'bolt', tabBar: false },
   { to: '/app/transactions', label: 'Transactions', icon: 'list' },
   { to: '/app/profile', label: 'Profile', icon: 'user' },
 ];
@@ -169,7 +162,7 @@ export function CustomerLayout() {
       </div>
 
       <nav className="tab-bar" aria-label="Main">
-        {CUSTOMER_NAV.map((item) => (
+        {CUSTOMER_NAV.filter((item) => item.tabBar !== false).map((item) => (
           <NavLink key={item.to} to={item.to} end={item.end}>
             <Icon name={item.icon} />
             <span>{item.label}</span>
@@ -182,22 +175,101 @@ export function CustomerLayout() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// The back office: compliance (admin) and operations (maker-checker).
-// ---------------------------------------------------------------------------
+interface StaffNavItem {
+  to: string;
+  label: string;
+  icon: string;
+  need: string[];
+  why: string;
+  end?: boolean;
+}
+
+const STAFF_NAV: StaffNavItem[] = [
+  { to: '/admin', label: 'My desk', icon: 'home', need: [], why: '', end: true },
+  {
+    to: '/admin/kyc',
+    label: 'KYC reviews',
+    icon: 'idcard',
+    need: ['KYC_REVIEW'],
+    why: 'Only Compliance decides who may bank with PayCore and at what limits.',
+  },
+  {
+    to: '/admin/customers',
+    label: 'Customers',
+    icon: 'users',
+    need: ['CUSTOMER_READ'],
+    why: 'Every staff member can look customers up.',
+  },
+  {
+    to: '/admin/payments',
+    label: 'Payments',
+    icon: 'card',
+    need: ['ACCOUNT_VIEW_ALL'],
+    why: 'The System Admin hands out access, so they are kept away from customers’ money.',
+  },
+  {
+    to: '/admin/ledger',
+    label: 'Transactions',
+    icon: 'search',
+    need: ['ACCOUNT_VIEW_ALL'],
+    why: 'The System Admin hands out access, so they are kept away from customers’ money.',
+  },
+  {
+    to: '/admin/operations',
+    label: 'Approvals',
+    icon: 'queue',
+    need: ['LEDGER_REQUEST', 'LEDGER_APPROVE'],
+    why: 'Corrections belong to Operations: an Officer requests, a Supervisor approves.',
+  },
+  {
+    to: '/admin/reconciliation',
+    label: 'Reconciliation',
+    icon: 'list',
+    need: ['ACCOUNT_VIEW_ALL'],
+    why: 'The System Admin hands out access, so they are kept away from customers’ money.',
+  },
+  { to: '/admin/scenarios', label: 'Scenarios', icon: 'guide', need: [], why: '' },
+];
+
+export function DeskGate({ to, children }: { to: string; children: ReactNode }) {
+  const { can, claims } = useAuth();
+  const item = STAFF_NAV.find((entry) => entry.to === to);
+  if (!item || item.need.length === 0 || item.need.some(can)) return <>{children}</>;
+
+  const staffRole = staffRoleOf(claims?.roles);
+  return (
+    <section className="panel locked-desk">
+      <span className="locked-mark">
+        <Icon name="lock" size={28} />
+      </span>
+      <h1>{item.label} is not your desk</h1>
+      <p>{item.why}</p>
+      {staffRole && (
+        <p className="muted">
+          You are signed in as a <strong>{DESKS[staffRole].title}</strong>. In a real bank this screen would simply not
+          exist for you; here it is shown locked so you can see how the work is split. The API refuses it too, with{' '}
+          <code>403</code>.
+        </p>
+      )}
+      <div className="actions">
+        <Link className="btn btn-primary" to="/admin">
+          Back to my desk
+        </Link>
+        <Link className="btn btn-ghost" to="/admin/scenarios">
+          Try it as the right person
+        </Link>
+      </div>
+    </section>
+  );
+}
 
 export function StaffLayout() {
   const { profile, session, claims, can, isCustomer } = useAuth();
   const signOut = useSignOut();
   const name = profile ? `${profile.firstName} ${profile.lastName}` : session?.email;
-  const role = claims?.roles.includes('OPERATIONS') ? 'Operations' : claims?.roles.includes('ADMIN') ? 'Admin' : 'Support';
-
-  const nav: { to: string; label: string; icon: string; show: boolean; end?: boolean }[] = [
-    { to: '/admin', label: 'KYC reviews', icon: 'idcard', show: can('KYC_REVIEW'), end: true },
-    { to: '/admin/customers', label: 'Customers', icon: 'users', show: can('CUSTOMER_READ') },
-    { to: '/admin/operations', label: 'Approvals', icon: 'queue', show: can('LEDGER_REQUEST') || can('LEDGER_APPROVE') },
-    { to: '/admin/ledger', label: 'Transactions', icon: 'search', show: can('ACCOUNT_VIEW_ALL') },
-  ];
+  const staffRole = staffRoleOf(claims?.roles);
+  const role = staffRole ? DESKS[staffRole].title : 'Staff';
+  const nav = STAFF_NAV.map((item) => ({ ...item, show: item.need.length === 0 || item.need.some(can) }));
 
   return (
     <div className="shell shell-staff">
@@ -206,14 +278,18 @@ export function StaffLayout() {
         <aside className="sidebar sidebar-staff">
           <Brand to="/admin" subtitle="Back office" />
           <nav className="side-nav" aria-label="Back office">
-            {nav
-              .filter((item) => item.show)
-              .map((item) => (
-                <NavLink key={item.to} to={item.to} end={item.end}>
-                  <Icon name={item.icon} />
-                  {item.label}
-                </NavLink>
-              ))}
+            {nav.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.end}
+                className={({ isActive }) => `${isActive ? 'active' : ''} ${item.show ? '' : 'locked'}`}
+                title={item.show ? undefined : item.why}
+              >
+                <Icon name={item.show ? item.icon : 'lock'} />
+                {item.label}
+              </NavLink>
+            ))}
           </nav>
           {isCustomer && (
             <Link to="/app" className="side-switch">
@@ -260,7 +336,6 @@ export function StaffLayout() {
   );
 }
 
-/** A screen title inside the app shells. */
 export function ScreenTitle({ title, children, back }: { title: string; children?: ReactNode; back?: string }) {
   return (
     <header className="screen-title">

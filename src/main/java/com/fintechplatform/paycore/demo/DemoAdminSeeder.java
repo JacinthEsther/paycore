@@ -1,5 +1,6 @@
 package com.fintechplatform.paycore.demo;
 
+import com.fintechplatform.paycore.authorization.entity.Role;
 import com.fintechplatform.paycore.authorization.entity.RoleName;
 import com.fintechplatform.paycore.authorization.service.AuthorizationService;
 import com.fintechplatform.paycore.authorization.service.RoleAssignmentService;
@@ -24,12 +25,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
 
-/**
- * Creates the shared demo staff once the application is ready, or repairs
- * them: after every restart the admin is ACTIVE with the CUSTOMER and
- * ADMIN roles, each operations officer ({@link DemoStaff}) is ACTIVE with
- * the OPERATIONS role, and all accept the configured password.
- */
 @Component
 @ConditionalOnProperty(name = "paycore.demo.enabled", havingValue = "true")
 public class DemoAdminSeeder {
@@ -72,7 +67,6 @@ public class DemoAdminSeeder {
         this.passwordEncoder = passwordEncoder;
         this.eventPublisher = eventPublisher;
 
-        // Fail startup, not the first login, when the password is missing.
         String password = properties.getAdminPassword();
 
         if (password == null || password.length() < MIN_PASSWORD_LENGTH) {
@@ -84,7 +78,6 @@ public class DemoAdminSeeder {
         }
     }
 
-    /** Runs before DemoRecipientSeeder, which records the admin as activating its account. */
     @EventListener(ApplicationReadyEvent.class)
     @Order(1)
     @Transactional
@@ -100,7 +93,7 @@ public class DemoAdminSeeder {
         activate(admin);
 
         ensureRole(admin, RoleName.CUSTOMER);
-        ensureRole(admin, RoleName.ADMIN);
+        ensureOnlyStaffRole(admin, RoleName.ADMIN);
 
         ensurePassword(admin, properties.getAdminPassword());
 
@@ -109,19 +102,13 @@ public class DemoAdminSeeder {
         log.info("Demo admin ready: {}", email);
 
         for (DemoStaff staff : DemoStaff.ALL) {
-            seedOperationsOfficer(staff);
+            seedStaff(staff);
         }
     }
 
-    /**
-     * The same treatment for an operations officer: ACTIVE, the OPERATIONS
-     * role only (no customer app, no admin powers), the demo password.
-     */
-    private void seedOperationsOfficer(DemoStaff staff) {
+    private void seedStaff(DemoStaff staff) {
 
-        // Not a registration: officers are employees, not customers, so they
-        // get no KYC profile (and no place in the KYC review queue).
-        Customer officer =
+        Customer member =
                 customerRepository
                         .findByEmail(staff.email())
                         .orElseGet(() -> customerRepository.save(
@@ -136,13 +123,26 @@ public class DemoAdminSeeder {
                                 )
                         ));
 
-        activate(officer);
-        ensureRole(officer, DemoStaff.ROLE);
-        ensurePassword(officer, properties.getAdminPassword());
+        activate(member);
+        ensureOnlyStaffRole(member, staff.role());
+        ensurePassword(member, properties.getAdminPassword());
 
-        customerRepository.save(officer);
+        customerRepository.save(member);
 
-        log.info("Demo operations officer ready: {}", staff.email());
+        log.info("Demo {} ready: {}", staff.title(), staff.email());
+    }
+
+    private void ensureOnlyStaffRole(Customer member, String role) {
+
+        member.getRoles()
+                .stream()
+                .map(Role::getName)
+                .filter(RoleName.STAFF::contains)
+                .filter(held -> !held.equals(role))
+                .toList()
+                .forEach(held -> roleAssignmentService.revokeRole(member, held, null, SEED_REASON));
+
+        ensureRole(member, role);
     }
 
     private Customer createAdmin(String email) {
@@ -163,7 +163,6 @@ public class DemoAdminSeeder {
                         )
                 );
 
-        // Same side effects as a normal registration (its KYC profile).
         eventPublisher.publishEvent(new CustomerRegisteredEvent(admin.getId()));
 
         return admin;

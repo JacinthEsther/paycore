@@ -19,24 +19,18 @@ public interface KycProfileRepository
 
     Optional<KycProfile> findByCustomer(Customer customer);
 
-    /**
-     * Locks the profile row (SELECT ... FOR UPDATE) until the transaction
-     * ends, so concurrent BVN checks for one customer run one at a time
-     * and cannot both slip under the retry limit.
-     */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT p FROM KycProfile p WHERE p.customer = :customer")
     Optional<KycProfile> findByCustomerForUpdate(
             @Param("customer") Customer customer
     );
 
-    /**
-     * Same row lock by profile id, used by admin actions that must not
-     * interleave with an in-flight BVN check (e.g. resetting attempts).
-     */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT p FROM KycProfile p WHERE p.id = :id")
     Optional<KycProfile> findByIdForUpdate(@Param("id") UUID id);
+
+    @Query("SELECT p.tier FROM KycProfile p WHERE p.customer.id = :customerId")
+    Optional<Short> findTierByCustomerId(@Param("customerId") UUID customerId);
 
     boolean existsByCustomer(Customer customer);
 

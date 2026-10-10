@@ -6,11 +6,6 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
-/**
- * Sets spring.datasource.password directly (without loading the project's
- * config files), so the result does not depend on whether this machine has
- * a paycore-local.properties.
- */
 class RequiredSecretsConfigurationTest {
 
     private static final String MESSAGE =

@@ -22,11 +22,6 @@ public class JwtConfiguration {
 
     private static final int MIN_SECRET_BYTES = 32;
 
-    /**
-     * Prefix of the development-only fallback secret in
-     * application.properties. It is public in the repository, so it must
-     * never sign production tokens.
-     */
     static final String DEV_SECRET_PREFIX = "local-dev-only";
 
     private final Environment environment;
@@ -40,9 +35,6 @@ public class JwtConfiguration {
 
         String secret = properties.getSecret();
 
-        // @ConfigurationProperties binding leaves an unresolvable
-        // placeholder such as ${PAYCORE_JWT_SECRET} as literal text instead
-        // of failing, so a missing environment variable must be caught here.
         if (secret != null && secret.startsWith("${") && secret.endsWith("}")) {
 
             String variable =

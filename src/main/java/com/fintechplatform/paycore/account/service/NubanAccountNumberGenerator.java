@@ -5,21 +5,11 @@ import org.springframework.stereotype.Component;
 
 import java.security.SecureRandom;
 
-/**
- * Generates 10-digit account numbers in the CBN NUBAN format: a 9-digit
- * serial followed by a check digit computed over the institution code and
- * the serial. The check digit catches most mistyped account numbers before
- * any lookup, as Nigerian bank account numbers do.
- *
- * Serials come from {@link SecureRandom} so account numbers cannot be
- * predicted or enumerated from one another.
- */
 @Component
 public class NubanAccountNumberGenerator implements AccountNumberGenerator {
 
     private static final int SERIAL_LENGTH = 9;
 
-    /** NUBAN weights, applied to the 3-digit code then the 9-digit serial. */
     private static final int[] WEIGHTS = {3, 7, 3, 3, 7, 3, 3, 7, 3, 3, 7, 3};
 
     private final SecureRandom random = new SecureRandom();
@@ -50,10 +40,6 @@ public class NubanAccountNumberGenerator implements AccountNumberGenerator {
         return serial.toString() + checkDigit(institutionCode, serial.toString());
     }
 
-    /**
-     * Whether the account number carries the right check digit for the
-     * institution code.
-     */
     public static boolean isValid(String institutionCode, String accountNumber) {
 
         if (accountNumber == null || !accountNumber.matches("\\d{10}")) {

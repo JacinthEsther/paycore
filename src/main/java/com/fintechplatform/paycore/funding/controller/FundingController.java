@@ -1,6 +1,8 @@
 package com.fintechplatform.paycore.funding.controller;
 
+import com.fintechplatform.paycore.funding.service.FundingOutcome;
 import com.fintechplatform.paycore.funding.service.FundingService;
+import com.fintechplatform.paycore.payment.dto.PaymentResponse;
 import com.fintechplatform.paycore.ledger.dto.request.FundAccountRequest;
 import com.fintechplatform.paycore.ledger.dto.response.FundingAllowanceResponse;
 import com.fintechplatform.paycore.ledger.dto.response.TransactionResponse;
@@ -14,10 +16,6 @@ import org.springframework.web.bind.annotation.*;
 import java.net.URI;
 import java.util.UUID;
 
-/**
- * Customers adding money to their own accounts through the payment
- * provider. Only ever the caller's own accounts (404 otherwise).
- */
 @RestController
 @RequestMapping("/api/v1/ledger/accounts/{accountId}")
 public class FundingController {
@@ -28,30 +26,32 @@ public class FundingController {
         this.fundingService = fundingService;
     }
 
-    /**
-     * 201 with the deposit once the provider confirmed the payment; 422
-     * PAYMENT_DECLINED if it did not, with nothing credited. A retry with
-     * the same idempotency key returns the same deposit and charges
-     * nothing.
-     */
     @PostMapping("/fundings")
     @PreAuthorize("hasAuthority('TRANSACTION_CREATE')")
-    public ResponseEntity<TransactionResponse> fund(
+    public ResponseEntity<?> fund(
             @AuthenticationPrincipal CurrentUser currentUser,
             @PathVariable UUID accountId,
             @Valid @RequestBody FundAccountRequest request
     ) {
 
-        TransactionResponse funding = fundingService.fund(currentUser.customerId(), accountId, request);
+        FundingOutcome outcome = fundingService.fund(currentUser.customerId(), accountId, request);
+
+        if (!outcome.isCredited()) {
+            PaymentResponse payment = outcome.payment();
+
+            return ResponseEntity
+                    .accepted()
+                    .location(URI.create("/api/v1/payments/" + payment.id()))
+                    .body(payment);
+        }
+
+        TransactionResponse funding = outcome.transaction();
 
         return ResponseEntity
                 .created(URI.create("/api/v1/ledger/transactions/" + funding.id()))
                 .body(funding);
     }
 
-    /**
-     * Whether top-ups are available, and how much more can be added.
-     */
     @GetMapping("/funding")
     @PreAuthorize("hasAuthority('ACCOUNT_READ')")
     public FundingAllowanceResponse allowance(

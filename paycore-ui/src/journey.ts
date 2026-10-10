@@ -1,9 +1,5 @@
 import { useSyncExternalStore } from 'react';
 
-// The guided walkthrough. Progress is kept per browser in localStorage so a
-// visitor can switch between the customer and the staff accounts and still
-// see where they are.
-
 export type StepId =
   | 'register'
   | 'login'
@@ -16,8 +12,10 @@ export type StepId =
   | 'receive'
   | 'transfer'
   | 'transfer-out'
+  | 'bill'
   | 'ops-request'
-  | 'ops-approve';
+  | 'ops-approve'
+  | 'scenario';
 
 export interface Step {
   id: StepId;
@@ -26,7 +24,7 @@ export interface Step {
 }
 
 export interface Phase {
-  id: 'customer' | 'admin' | 'banking' | 'operations';
+  id: 'customer' | 'admin' | 'banking' | 'operations' | 'desks';
   title: string;
   steps: Step[];
 }
@@ -44,10 +42,10 @@ export const PHASES: Phase[] = [
   },
   {
     id: 'admin',
-    title: 'Compliance (admin)',
+    title: 'Compliance',
     steps: [
-      { id: 'admin-login', label: 'Sign in as the admin', path: '/login?as=staff' },
-      { id: 'review', label: 'Approve the KYC', path: '/admin' },
+      { id: 'admin-login', label: 'Sign in as Compliance', path: '/login?as=staff&staff=compliance@paycore.demo' },
+      { id: 'review', label: 'Approve the KYC', path: '/admin/kyc' },
       { id: 'activate', label: 'Activate the account', path: '/admin/customers' },
     ],
   },
@@ -59,22 +57,26 @@ export const PHASES: Phase[] = [
       { id: 'receive', label: 'Receive money from Test Bank', path: '/app/add-money' },
       { id: 'transfer', label: 'Send to a PayCore account', path: '/app/transfer' },
       { id: 'transfer-out', label: 'Send to another bank', path: '/app/transfer' },
+      { id: 'bill', label: 'Pay a bill', path: '/app/bills' },
     ],
   },
   {
     id: 'operations',
     title: 'Fix a mistake (maker-checker)',
     steps: [
-      { id: 'ops-request', label: 'Officer requests a reversal', path: '/login?as=staff' },
-      { id: 'ops-approve', label: 'Supervisor approves it', path: '/admin/operations' },
+      { id: 'ops-request', label: 'Officer requests a reversal', path: '/login?as=staff&staff=ops.officer@paycore.demo' },
+      { id: 'ops-approve', label: 'Supervisor approves it', path: '/login?as=staff&staff=ops.supervisor@paycore.demo' },
     ],
+  },
+  {
+    id: 'desks',
+    title: 'Work every desk',
+    steps: [{ id: 'scenario', label: 'Play a back-office scenario', path: '/admin/scenarios' }],
   },
 ];
 
-
 interface JourneyState {
   done: StepId[];
-  /** The customer account this visitor created, to sign back in later. */
   customerEmail: string | null;
 }
 
@@ -98,7 +100,6 @@ function save(next: JourneyState) {
   try {
     localStorage.setItem(KEY, JSON.stringify(next));
   } catch {
-    // Progress just won't survive a reload.
   }
   listeners.forEach((listener) => listener());
 }

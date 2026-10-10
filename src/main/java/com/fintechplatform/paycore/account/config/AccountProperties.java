@@ -9,15 +9,8 @@ import java.util.stream.Collectors;
 @ConfigurationProperties(prefix = "paycore.accounts")
 public class AccountProperties {
 
-    /**
-     * ISO 4217 codes customers can open accounts in.
-     */
     private Set<String> supportedCurrencies = Set.of("NGN");
 
-    /**
-     * Three-digit institution code that seeds the NUBAN check digit of
-     * every account number. Changing it invalidates existing numbers.
-     */
     private String institutionCode = "999";
 
     public Set<String> getSupportedCurrencies() {

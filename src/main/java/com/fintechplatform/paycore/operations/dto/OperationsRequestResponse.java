@@ -3,18 +3,13 @@ package com.fintechplatform.paycore.operations.dto;
 import com.fintechplatform.paycore.ledger.enums.LedgerEntryType;
 import com.fintechplatform.paycore.operations.enums.OperationsRequestStatus;
 import com.fintechplatform.paycore.operations.enums.OperationsRequestType;
+import com.fintechplatform.paycore.payment.enums.PaymentResolution;
+import com.fintechplatform.paycore.payment.enums.PaymentType;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
-/**
- * A maker-checker request as the operations queue shows it. For an
- * ADJUSTMENT, account and direction say what changes; for a REVERSAL,
- * transaction names what is undone. amount and currency are the money
- * either way. resultReference is the ledger transaction an approval
- * posted.
- */
 public record OperationsRequestResponse(
         UUID id,
         OperationsRequestType type,
@@ -38,6 +33,10 @@ public record OperationsRequestResponse(
         Instant decidedAt,
         String decisionNote,
         UUID resultTransactionId,
-        String resultReference
+        String resultReference,
+        UUID paymentId,
+        String paymentReference,
+        PaymentType paymentType,
+        PaymentResolution resolution
 ) {
 }

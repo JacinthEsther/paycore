@@ -16,15 +16,6 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
-/**
- * Staff reads of the ledger: any transaction (with its staff note), any
- * customer account's balance and statement, and PayCore's own system
- * accounts for reconciliation.
- *
- * Staff cannot move money here. Money enters and leaves through payment
- * providers and bank transfers; corrections go through maker-checker
- * requests (OperationsController).
- */
 @RestController
 @RequestMapping("/api/v1/admin/ledger")
 public class AdminLedgerController {
@@ -58,10 +49,6 @@ public class AdminLedgerController {
         return ledgerService.getCustomerAccountBalance(accountId);
     }
 
-    /**
-     * Any customer account's statement; same shape and defaults as the
-     * customer's own.
-     */
     @GetMapping("/accounts/{accountId}/statement")
     @PreAuthorize("hasAuthority('ACCOUNT_VIEW_ALL')")
     public StatementResponse getStatement(

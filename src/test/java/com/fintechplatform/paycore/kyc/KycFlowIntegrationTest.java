@@ -52,12 +52,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/**
- * REGISTER -> LOGIN -> CREATE KYC -> START -> UPLOAD DOCUMENT -> BVN CHECK
- * -> SUBMIT -> START REVIEW -> VERIFIED / REJECTED / ADDITIONAL_INFO, over
- * real HTTP, JWT, PostgreSQL and file storage. Only the KYC provider is
- * mocked: builds never call Dojah.
- */
 @Testcontainers
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -70,9 +64,6 @@ class KycFlowIntegrationTest {
                     .withUsername("postgres")
                     .withPassword("postgres");
 
-    /**
-     * A tiny but valid-looking PDF header; the upload only sniffs magic bytes.
-     */
     private static final byte[] PDF =
             "%PDF-1.4\n%test\n".getBytes(StandardCharsets.US_ASCII);
 
@@ -161,7 +152,6 @@ class KycFlowIntegrationTest {
                         "$.id"
                 );
 
-        // Nothing can be added before the customer starts.
         uploadDocument(customer, "NATIONAL_ID")
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("INVALID_KYC_STATE"));
@@ -174,8 +164,6 @@ class KycFlowIntegrationTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.kycStatus").value("IN_PROGRESS"));
 
-        // The file is on disk under a generated name; only metadata is in
-        // the database.
         String storageKey =
                 jdbcTemplate.queryForObject(
                         "SELECT storage_key FROM kyc_documents", String.class
@@ -184,7 +172,6 @@ class KycFlowIntegrationTest {
         assertThat(storageKey).startsWith(kycId + "/").endsWith(".pdf");
         assertThat(DOCUMENT_DIR.resolve(storageKey)).hasBinaryContent(PDF);
 
-        // First attempt: typo in the name, so the provider says FAILED.
         when(kycProvider.verifyBvn(any()))
                 .thenReturn(providerResult(VerificationResult.FAILED,
                         "Details do not match BVN record: last_name"))
@@ -195,7 +182,6 @@ class KycFlowIntegrationTest {
                 .andExpect(jsonPath("$.result").value("FAILED"))
                 .andExpect(jsonPath("$.status").value("IN_PROGRESS"));
 
-        // PASSED is one verification signal, not a finished KYC package.
         verifyBvn(customer)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.result").value("PASSED"))
@@ -205,7 +191,6 @@ class KycFlowIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("SUBMITTED"));
 
-        // Submitted packages are frozen.
         uploadDocument(customer, "PASSPORT")
                 .andExpect(status().isConflict());
 
@@ -213,7 +198,6 @@ class KycFlowIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("SUBMITTED"));
 
-        // Both attempts are kept; the BVN itself is stored nowhere.
         assertThat(jdbcTemplate.queryForList(
                 "SELECT result FROM kyc_verifications ORDER BY created_at, id",
                 String.class
@@ -226,13 +210,11 @@ class KycFlowIntegrationTest {
                 Integer.class
         )).isZero();
 
-        // A normal customer cannot approve, not even their own KYC.
         authorized(post("/api/v1/kyc/{id}/approve", kycId), customer)
                 .andExpect(status().isForbidden());
 
         String admin = registerAdmin("admin@example.com", "08011111112");
 
-        // Cannot approve before a reviewer has picked it up.
         authorized(post("/api/v1/kyc/{id}/approve", kycId), admin)
                 .andExpect(status().isConflict());
 
@@ -250,7 +232,10 @@ class KycFlowIntegrationTest {
         authorized(get("/api/v1/kyc"), customer)
                 .andExpect(jsonPath("$.status").value("VERIFIED"));
 
-        // VERIFIED is final for the customer.
+        authorized(get("/api/v1/kyc/tier"), customer)
+                .andExpect(jsonPath("$.tier").value(1))
+                .andExpect(jsonPath("$.nextTierNeeds[0]").value("Verify your NIN"));
+
         verifyBvn(customer)
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("INVALID_KYC_STATE"));
@@ -282,7 +267,6 @@ class KycFlowIntegrationTest {
                 .andExpect(jsonPath("$.reviewReason")
                         .value("Identity document could not be validated"));
 
-        // REJECTED is final.
         authorized(post("/api/v1/kyc/start"), customer)
                 .andExpect(status().isConflict());
     }
@@ -309,7 +293,6 @@ class KycFlowIntegrationTest {
                 .andExpect(jsonPath("$.reviewReason")
                         .value("Please provide a clearer proof of address"));
 
-        // The customer has to resume before changing anything.
         uploadDocument(customer, "PROOF_OF_ADDRESS")
                 .andExpect(status().isConflict());
 
@@ -397,11 +380,9 @@ class KycFlowIntegrationTest {
                         .getResponse()
                         .getHeader("Retry-After");
 
-        // Roughly 24h until the first failure leaves the window.
         assertThat(Long.parseLong(retryAfter))
                 .isBetween(86_000L, 86_400L);
 
-        // The 4th request never reached the provider and was not recorded.
         verify(kycProvider, times(3)).verifyBvn(any());
 
         assertThat(jdbcTemplate.queryForObject(
@@ -426,7 +407,6 @@ class KycFlowIntegrationTest {
 
         verifyBvn(customer).andExpect(status().isTooManyRequests());
 
-        // Customers cannot lift their own limit.
         authorized(post("/api/v1/kyc/{id}/bvn-attempts/reset", kycId), customer)
                 .andExpect(status().isForbidden());
 
@@ -438,8 +418,6 @@ class KycFlowIntegrationTest {
                         "$.id"
                 );
 
-        // Paging: 3 attempts in pages of 2. The summary is the same on
-        // both pages even though page 1 holds only the oldest attempt.
         authorized(
                 get("/api/v1/kyc/{id}/bvn-attempts", kycId)
                         .param("size", "2"),
@@ -473,11 +451,9 @@ class KycFlowIntegrationTest {
         )
                 .andExpect(status().isBadRequest());
 
-        // Customers cannot see the admin view either.
         authorized(get("/api/v1/kyc/{id}/bvn-attempts", kycId), customer)
                 .andExpect(status().isForbidden());
 
-        // What the admin sees before resetting: limited, 3 counted.
         authorized(get("/api/v1/kyc/{id}/bvn-attempts", kycId), admin)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.limited").value(true))
@@ -497,7 +473,6 @@ class KycFlowIntegrationTest {
                 .andExpect(jsonPath("$.resetBy").value(adminId))
                 .andExpect(jsonPath("$.resetAt").exists());
 
-        // After the reset: history kept, but none of it counts any more.
         authorized(get("/api/v1/kyc/{id}/bvn-attempts", kycId), admin)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.limited").value(false))
@@ -510,13 +485,10 @@ class KycFlowIntegrationTest {
                         .value(org.hamcrest.Matchers.everyItem(
                                 org.hamcrest.Matchers.is(false))));
 
-        // Fresh attempts: the next failure leaves 2.
         verifyBvn(customer)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.remainingAttempts").value(2));
 
-        // Nothing was deleted: 3 old failures + 1 new one, and the reset
-        // is recorded against the admin.
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM kyc_verifications WHERE result = 'FAILED'",
                 Integer.class
@@ -559,7 +531,6 @@ class KycFlowIntegrationTest {
 
         startKyc(customer);
 
-        // A slow provider widens the window in which requests could race.
         when(kycProvider.verifyBvn(any()))
                 .thenAnswer(invocation -> {
                     Thread.sleep(200);
@@ -619,7 +590,6 @@ class KycFlowIntegrationTest {
                 .andExpect(jsonPath("$.missing[0]").value("passed BVN or NIN verification"))
                 .andExpect(jsonPath("$.missing[1]").value("identity document"));
 
-        // A FAILED check does not count.
         when(kycProvider.verifyBvn(any()))
                 .thenReturn(providerResult(VerificationResult.FAILED, "mismatch"))
                 .thenReturn(providerResult(VerificationResult.PASSED, null));
@@ -653,9 +623,6 @@ class KycFlowIntegrationTest {
                 .andExpect(jsonPath("$.error").value("KYC_ALREADY_EXISTS"));
     }
 
-    /**
-     * Creates and starts the caller's KYC; returns its id.
-     */
     private String startKyc(String accessToken) throws Exception {
 
         String kycId =
@@ -672,10 +639,6 @@ class KycFlowIntegrationTest {
         return kycId;
     }
 
-    /**
-     * Customer starts, passes BVN, uploads a document and submits; the
-     * reviewer then picks it up.
-     */
     private String createKycUnderReview(String customer, String reviewer)
             throws Exception {
 
@@ -772,7 +735,7 @@ class KycFlowIntegrationTest {
                             .findById(UUID.fromString(customerId))
                             .orElseThrow();
             customer.assignRole(
-                    roleRepository.findByName(RoleName.ADMIN).orElseThrow()
+                    roleRepository.findByName(RoleName.COMPLIANCE).orElseThrow()
             );
         });
 

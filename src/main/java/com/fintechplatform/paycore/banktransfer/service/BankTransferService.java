@@ -16,69 +16,73 @@ import com.fintechplatform.paycore.banktransfer.rail.BankRailException;
 import com.fintechplatform.paycore.banktransfer.rail.NameEnquiry;
 import com.fintechplatform.paycore.banktransfer.rail.RailPayment;
 import com.fintechplatform.paycore.banktransfer.rail.RailResult;
+import com.fintechplatform.paycore.banktransfer.rail.RailStatus;
 import com.fintechplatform.paycore.banktransfer.rail.SessionIds;
 import com.fintechplatform.paycore.customer.repository.CustomerRepository;
 import com.fintechplatform.paycore.ledger.domain.Counterparty;
 import com.fintechplatform.paycore.ledger.domain.Currency;
 import com.fintechplatform.paycore.ledger.domain.Money;
 import com.fintechplatform.paycore.ledger.dto.response.TransactionResponse;
-import com.fintechplatform.paycore.ledger.enums.LedgerTransactionStatus;
+import com.fintechplatform.paycore.ledger.exception.IdempotencyConflictException;
 import com.fintechplatform.paycore.ledger.service.LedgerService;
 import com.fintechplatform.paycore.ledger.service.OutboundTransfer;
+import com.fintechplatform.paycore.payment.config.PaymentProperties;
+import com.fintechplatform.paycore.payment.entity.Payment;
+import com.fintechplatform.paycore.payment.enums.PaymentStatus;
+import com.fintechplatform.paycore.payment.enums.PaymentType;
+import com.fintechplatform.paycore.payment.service.PaymentService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-/**
- * Sending money to other banks, and finding out who holds an account
- * before paying it (name enquiry), for PayCore accounts and accounts at
- * banks on the rail alike.
- *
- * An outbound transfer works like at any bank:
- *
- * <pre>
- * 1. retry of a transfer already made with this key? return it, pay nothing
- * 2. name enquiry: the beneficiary must exist; their name goes on the record
- * 3. ledger: DEBIT customer, CREDIT settlement, under the account lock
- * 4. rail: pay the beneficiary bank (no database transaction is open)
- * 5. rejected? the ledger reverses the debit and the customer has their money
- * </pre>
- *
- * Not transactional itself, so no row lock is held while the rail answers.
- */
 @Service
 public class BankTransferService {
 
-    /** PayCore itself, as a bank in the list and in name enquiry. */
     public static final Bank PAYCORE = new Bank("100999", "PayCore");
+
+    static final String NOT_CONFIRMED_YET =
+            "We have not been able to confirm this transfer with the beneficiary bank yet. "
+                    + "Our operations team is checking it.";
+
+    static final String NEVER_ARRIVED =
+            "The transfer did not reach the beneficiary bank; your money was returned";
+
+    static final String NEVER_SENT =
+            "The transfer could not be sent; your money was returned";
 
     private static final Logger log = LoggerFactory.getLogger(BankTransferService.class);
 
     private final ObjectProvider<BankRail> rails;
     private final LedgerService ledgerService;
+    private final PaymentService paymentService;
+    private final PaymentProperties paymentProperties;
     private final AccountRepository accountRepository;
     private final CustomerRepository customerRepository;
 
     public BankTransferService(
             ObjectProvider<BankRail> rails,
             LedgerService ledgerService,
+            PaymentService paymentService,
+            PaymentProperties paymentProperties,
             AccountRepository accountRepository,
             CustomerRepository customerRepository
     ) {
         this.rails = rails;
         this.ledgerService = ledgerService;
+        this.paymentService = paymentService;
+        this.paymentProperties = paymentProperties;
         this.accountRepository = accountRepository;
         this.customerRepository = customerRepository;
     }
 
-    /** PayCore first, then every bank the rail reaches (none without a rail). */
     public List<BankResponse> banks() {
 
         List<BankResponse> banks = new ArrayList<>();
@@ -93,11 +97,6 @@ public class BankTransferService {
         return banks;
     }
 
-    /**
-     * The name on the account, so the customer can check who they are
-     * paying. A PayCore account is looked up here; another bank's through
-     * the rail.
-     */
     @Transactional(readOnly = true)
     public NameEnquiryResponse nameEnquiry(UUID customerId, String bankCode, String accountNumber) {
 
@@ -131,10 +130,10 @@ public class BankTransferService {
 
         BankRail rail = requireRail();
 
-        Optional<TransactionResponse> previous = ledgerService.findOutbound(customerId, request.idempotencyKey());
+        Optional<Payment> previous = paymentService.findByKey(customerId, request.idempotencyKey());
 
         if (previous.isPresent()) {
-            return outcomeOf(previous.get());
+            return toResponse(sameTransfer(previous.get(), sourceAccountId, request));
         }
 
         Bank bank = requireBank(rail, request.bankCode());
@@ -145,8 +144,8 @@ public class BankTransferService {
 
         String sessionId = SessionIds.next(PAYCORE.code());
 
-        TransactionResponse debit =
-                ledgerService.postOutbound(
+        Payment payment =
+                paymentService.initiateOutbound(
                         customerId,
                         sourceAccountId,
                         new OutboundTransfer(
@@ -157,14 +156,15 @@ public class BankTransferService {
                                 rail.providerName(),
                                 sessionId,
                                 new Counterparty(beneficiaryName, bank.name(), request.accountNumber())
-                        )
+                        ),
+                        bank.code()
                 );
 
-        // A concurrent duplicate of this request was debited first; it is
-        // the one being paid, not this session.
-        if (!sessionId.equals(debit.providerReference())) {
-            return outcomeOf(debit);
+        if (!sessionId.equals(payment.getExternalReference())) {
+            return toResponse(payment);
         }
+
+        payment = paymentService.markProcessing(payment.getId());
 
         RailResult result;
 
@@ -175,46 +175,112 @@ public class BankTransferService {
                             bank.code(),
                             request.accountNumber(),
                             beneficiaryName,
-                            Money.ofMajor(request.amount(), Currency.of(request.currency())),
-                            debit.description(),
+                            payment.amount(),
+                            payment.getNarration(),
                             senderName(customerId)
                     ));
         } catch (RuntimeException exception) {
-            // Outcome unknown: the beneficiary may have been paid. Reversing
-            // now could pay the customer twice, so the debit stands until
-            // the session is confirmed with the provider.
-            log.error(
-                    "Outbound transfer {} (session {}) has an unknown outcome and needs a status check: {}",
-                    debit.reference(), sessionId, exception.getMessage()
+            log.warn(
+                    "Outbound transfer {} (session {}) has an unknown outcome; checking its status later: {}",
+                    payment.getReference(), sessionId, exception.getMessage()
             );
-            return new OutboundTransferResponse(debit, OutboundTransferResponse.PENDING, null, null);
+            return toResponse(paymentService.markUnknown(payment.getId()));
         }
 
         if (result.accepted()) {
-            return new OutboundTransferResponse(debit, OutboundTransferResponse.SUCCESSFUL, null, null);
+            return toResponse(paymentService.succeed(payment.getId()));
         }
 
-        TransactionResponse reversal = ledgerService.reverseRejectedOutbound(debit.id(), result.reason());
+        return toResponse(paymentService.failOutbound(payment.getId(), rejectionReason(result.reason())));
+    }
+
+    public Payment settle(Payment payment) {
+
+        RailStatus status = currentStatus(payment);
+
+        return switch (status == null ? RailStatus.Outcome.PENDING : status.outcome()) {
+
+            case SUCCESSFUL -> paymentService.succeed(payment.getId());
+
+            case FAILED -> paymentService.failOutbound(payment.getId(), rejectionReason(status.reason()));
+
+            case NOT_FOUND -> payment.getCreatedAt().isBefore(Instant.now().minus(paymentProperties.getNotFoundGrace()))
+                    ? paymentService.failOutbound(payment.getId(), NEVER_ARRIVED)
+                    : paymentService.stillUnknown(payment.getId(), NOT_CONFIRMED_YET);
+
+            case PENDING -> paymentService.stillUnknown(payment.getId(), NOT_CONFIRMED_YET);
+        };
+    }
+
+    public Optional<Payment> abandonUnsent(UUID paymentId, Instant staleBefore) {
+        return paymentService.failOutboundIfUnsent(paymentId, staleBefore, NEVER_SENT);
+    }
+
+    public RailStatus currentStatus(Payment payment) {
+
+        BankRail rail = rails.getIfAvailable();
+
+        if (rail == null || !rail.providerName().equals(payment.getProvider())) {
+            log.warn("Cannot check transfer {}: {} is not the configured rail",
+                    payment.getReference(), payment.getProvider());
+            return null;
+        }
+
+        try {
+            return rail.status(payment.getExternalReference());
+        } catch (RuntimeException exception) {
+            log.warn("Status check of transfer {} with {} failed: {}",
+                    payment.getReference(), rail.providerName(), exception.getMessage());
+            return null;
+        }
+    }
+
+    private static Payment sameTransfer(Payment payment, UUID sourceAccountId, OutboundTransferRequest request) {
+
+        boolean same =
+                payment.getType() == PaymentType.OUTBOUND_TRANSFER
+                        && payment.getAccountId().equals(sourceAccountId)
+                        && payment.getCurrency().equals(request.currency())
+                        && payment.amount().equals(Money.ofMajor(request.amount(), Currency.of(request.currency())))
+                        && payment.getCounterpartyAccountNumber().equals(request.accountNumber())
+                        && (payment.getCounterpartyBankCode() == null
+                                || payment.getCounterpartyBankCode().equals(request.bankCode()));
+
+        if (!same) {
+            throw new IdempotencyConflictException();
+        }
+
+        return payment;
+    }
+
+    public OutboundTransferResponse toResponse(Payment payment) {
+
+        TransactionResponse debit = ledgerService.getTransaction(payment.getCustomerId(), payment.getLedgerTransactionId());
+
+        String transferStatus = switch (payment.getStatus()) {
+            case SUCCEEDED -> OutboundTransferResponse.SUCCESSFUL;
+            case FAILED -> OutboundTransferResponse.FAILED;
+            default -> OutboundTransferResponse.PENDING;
+        };
+
+        String reversalReference =
+                payment.getReversalTransactionId() == null
+                        ? null
+                        : ledgerService.getTransaction(payment.getCustomerId(), payment.getReversalTransactionId()).reference();
 
         return new OutboundTransferResponse(
-                ledgerService.getTransaction(customerId, debit.id()),
-                OutboundTransferResponse.FAILED,
-                result.reason(),
-                reversal.reference()
+                debit,
+                transferStatus,
+                payment.getStatus() == PaymentStatus.SUCCEEDED ? null : payment.getFailureReason(),
+                reversalReference,
+                payment.getId(),
+                payment.getReference(),
+                payment.getStatus()
         );
     }
 
-    /** A transfer made earlier: successful unless it was reversed. */
-    private static OutboundTransferResponse outcomeOf(TransactionResponse transaction) {
-
-        boolean reversed = transaction.status() == LedgerTransactionStatus.REVERSED;
-
-        return new OutboundTransferResponse(
-                transaction,
-                reversed ? OutboundTransferResponse.FAILED : OutboundTransferResponse.SUCCESSFUL,
-                reversed ? "The transfer failed and the money was returned" : null,
-                null
-        );
+    private static String rejectionReason(String reason) {
+        return reason == null || reason.isBlank() ? "The beneficiary bank rejected the transfer" : reason;
     }
 
     private Optional<String> enquire(BankRail rail, NameEnquiry enquiry) {

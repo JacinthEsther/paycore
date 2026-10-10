@@ -21,10 +21,6 @@ import java.util.function.Consumer;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/**
- * The same issuer, audience and expiry checks as production, on tokens
- * signed with a local key instead of Google's.
- */
 class JwtGoogleIdTokenVerifierTest {
 
     private static final String CLIENT_ID = "paycore-test.apps.googleusercontent.com";

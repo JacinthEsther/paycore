@@ -5,11 +5,6 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 
-/**
- * NIP-style session ids: 30 digits, the sending institution's 6-digit
- * code, the Lagos date and time to the second (yyMMddHHmmss), then 12
- * random digits.
- */
 public final class SessionIds {
 
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyMMddHHmmss");

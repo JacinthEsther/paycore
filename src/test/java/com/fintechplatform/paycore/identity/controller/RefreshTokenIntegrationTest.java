@@ -139,13 +139,11 @@ class RefreshTokenIntegrationTest {
 
         String tokenB = JsonPath.read(refreshed, "$.refreshToken");
 
-        // Replaying A is treated as theft.
         refresh(tokenA)
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error")
                         .value("REFRESH_TOKEN_REUSED"));
 
-        // The revocation is committed despite the error response.
         assertThat(refreshTokenRepository
                 .findByFamilyIdAndRevokedAtIsNull(stored(tokenA).getFamilyId()))
                 .isEmpty();
@@ -155,7 +153,6 @@ class RefreshTokenIntegrationTest {
                         assertThat(session.isRevoked()).isTrue()
                 );
 
-        // B was legitimately issued but is now unusable: re-authenticate.
         refresh(tokenB)
                 .andExpect(status().isUnauthorized());
     }

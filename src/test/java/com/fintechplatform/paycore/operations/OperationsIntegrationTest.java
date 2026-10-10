@@ -41,12 +41,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/**
- * Maker-checker corrections end to end against PostgreSQL: reversals and
- * manual adjustments are requested by one operations officer and posted
- * only when a different officer approves them. Nobody else can move money
- * by hand, and no officer can touch their own account.
- */
 @Testcontainers
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -68,6 +62,9 @@ class OperationsIntegrationTest {
 
     private static final AtomicInteger PHONES = new AtomicInteger(6_000_000);
 
+    private static final String TEST_DEVICE_ID = "integration-test-device";
+    private static final String TEST_PIN = "2580";
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -83,10 +80,10 @@ class OperationsIntegrationTest {
     @BeforeEach
     void cleanDatabase() throws Exception {
 
+        jdbcTemplate.execute("TRUNCATE ledger_entries, ledger_transactions CASCADE");
+
         for (String table : new String[]{
                 "operations_requests",
-                "ledger_entries",
-                "ledger_transactions",
                 "account_status_events",
                 "accounts",
                 "kyc_verifications",
@@ -103,13 +100,9 @@ class OperationsIntegrationTest {
             jdbcTemplate.execute("DELETE FROM " + table);
         }
 
-        maker = staff(activeHolder("ada"), "OPERATIONS");
-        checker = staff(activeHolder("bola"), "OPERATIONS");
+        maker = staff(activeHolder("ada"), "OPERATIONS_OFFICER");
+        checker = staff(activeHolder("bola"), "OPERATIONS_SUPERVISOR");
     }
-
-    // ============================================================
-    // REVERSALS
-    // ============================================================
 
     @Test
     void reversalShouldWaitForASecondOfficerThenMoveTheMoneyBack() throws Exception {
@@ -129,7 +122,6 @@ class OperationsIntegrationTest {
 
         String requestId = JsonPath.read(request, "$.id");
 
-        // Nothing has moved yet.
         assertThat(balance(esther)).isEqualByComparingTo("700");
         assertThat(balance(john)).isEqualByComparingTo("300");
 
@@ -147,7 +139,6 @@ class OperationsIntegrationTest {
         assertThat(balance(esther)).isEqualByComparingTo("1000");
         assertThat(balance(john)).isEqualByComparingTo("0");
 
-        // The reversal records both officers and the reason.
         assertThat(jdbcTemplate.queryForMap(
                 "SELECT initiated_by::text AS maker, approved_by::text AS checker, staff_note "
                         + "FROM ledger_transactions WHERE reverses_transaction_id = ?::uuid",
@@ -171,15 +162,13 @@ class OperationsIntegrationTest {
         String requestId = adjustmentId(maker, esther, "CREDIT", "100", "Fee charged twice");
 
         approve(maker, requestId)
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.error").value("FOUR_EYES_REQUIRED"));
+                .andExpect(status().isForbidden());
 
         reject(maker, requestId, "Never mind")
                 .andExpect(status().isForbidden());
 
         assertThat(balance(esther)).isEqualByComparingTo("1000");
 
-        // The database refuses it as well.
         assertThatThrownBy(() -> jdbcTemplate.update(
                 "UPDATE operations_requests SET status = 'REJECTED', decided_by = requested_by, decided_at = now() "
                         + "WHERE id = ?::uuid",
@@ -193,10 +182,9 @@ class OperationsIntegrationTest {
     void aRequestIsDecidedOnceAndApprovingTwicePostsOnce() throws Exception {
 
         Holder esther = funded("esther", "1000");
-        Holder third = staff(activeHolder("chidi"), "OPERATIONS");
+        Holder third = staff(activeHolder("chidi"), "OPERATIONS_SUPERVISOR");
         String requestId = adjustmentId(maker, esther, "CREDIT", "100", "Goodwill credit");
 
-        // Two checkers approve at the same moment.
         List<Callable<Object>> tasks = List.of(
                 () -> approve(checker, requestId).andReturn().getResponse().getStatus(),
                 () -> approve(third, requestId).andReturn().getResponse().getStatus()
@@ -239,13 +227,14 @@ class OperationsIntegrationTest {
                 "$.id"
         );
 
-        requestReversal(checker, transfer, "Wrong account")
+        Holder secondOfficer = staff(activeHolder("chidi"), "OPERATIONS_OFFICER");
+
+        requestReversal(secondOfficer, transfer, "Wrong account")
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("DUPLICATE_REVERSAL_REQUEST"));
 
         approve(checker, requestId).andExpect(status().isOk());
 
-        // Once reversed, it cannot be reversed again.
         requestReversal(maker, transfer, "Again")
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("TRANSACTION_NOT_REVERSIBLE"));
@@ -263,14 +252,12 @@ class OperationsIntegrationTest {
                 "$.id"
         );
 
-        // John spends it before the checker gets to it.
         transfer(john, esther, "300", "transfer-0004");
 
         approve(checker, requestId)
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.error").value("INSUFFICIENT_FUNDS"));
 
-        // Still pending: nothing half-done.
         mockMvc.perform(authorized(get("/api/v1/ops/requests/{id}", requestId), checker.token()))
                 .andExpect(jsonPath("$.status").value("PENDING"));
     }
@@ -282,7 +269,6 @@ class OperationsIntegrationTest {
         Holder john = activeHolder("john");
         String transfer = transfer(esther, john, "300", "transfer-0005");
 
-        // Fraud: John's account is frozen and the money pulled back.
         jdbcTemplate.update("UPDATE accounts SET status = 'FROZEN' WHERE id = ?::uuid", john.accountId());
 
         String requestId = JsonPath.read(
@@ -302,10 +288,6 @@ class OperationsIntegrationTest {
                 .andExpect(jsonPath("$.error").value("INVALID_ACCOUNT_STATE"));
     }
 
-    // ============================================================
-    // ADJUSTMENTS
-    // ============================================================
-
     @Test
     void adjustmentsShouldCreditOrDebitAgainstSettlement() throws Exception {
 
@@ -322,7 +304,6 @@ class OperationsIntegrationTest {
         assertThat(balance(esther)).isEqualByComparingTo("1030");
         assertThat(settlementBalance()).isEqualByComparingTo("1030");
 
-        // A debit beyond the balance is refused at approval.
         approve(checker, adjustmentId(maker, esther, "DEBIT", "5000", "Too much"))
                 .andExpect(status().isUnprocessableEntity());
 
@@ -366,10 +347,6 @@ class OperationsIntegrationTest {
                 .andExpect(jsonPath("$.approvedBy").value(checker.customerId()));
     }
 
-    // ============================================================
-    // WHO MAY DO WHAT
-    // ============================================================
-
     @Test
     void onlyOperationsOfficersCanRequestOrApprove() throws Exception {
 
@@ -388,7 +365,6 @@ class OperationsIntegrationTest {
             approve(outsider, requestId).andExpect(status().isForbidden());
         }
 
-        // The old manual deposit endpoint is gone.
         mockMvc.perform(authorized(post("/api/v1/admin/ledger/accounts/{id}/deposits", esther.accountId()), admin.token())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{ \"amount\": 100, \"currency\": \"NGN\", \"idempotencyKey\": \"x-00000001\" }"))
@@ -400,23 +376,17 @@ class OperationsIntegrationTest {
     @Test
     void officersCannotCorrectTheirOwnAccounts() throws Exception {
 
-        // Officers are customers too, with their own accounts.
         fund(maker, "1000");
 
         requestAdjustment(maker, maker, "CREDIT", "100", "Bonus")
                 .andExpect(status().isForbidden());
 
-        // The maker files one for the checker's account; the checker cannot approve it.
         String requestId = adjustmentId(maker, checker, "CREDIT", "100", "Bonus");
 
-        Holder third = staff(activeHolder("chidi"), "OPERATIONS");
+        Holder third = staff(activeHolder("chidi"), "OPERATIONS_SUPERVISOR");
         approve(checker, requestId).andExpect(status().isForbidden());
         approve(third, requestId).andExpect(status().isOk());
     }
-
-    // ============================================================
-    // HELPERS
-    // ============================================================
 
     private record Holder(String email, String customerId, String accountId, String accountNumber, String token) {
 
@@ -434,12 +404,11 @@ class OperationsIntegrationTest {
         String email = name + "@example.com";
         String customerId = register(email, "0806" + PHONES.incrementAndGet());
 
-        jdbcTemplate.update("UPDATE kyc_profiles SET status = 'VERIFIED' WHERE customer_id = ?::uuid", customerId);
+        jdbcTemplate.update("UPDATE kyc_profiles SET status = 'VERIFIED', tier = 3 WHERE customer_id = ?::uuid", customerId);
 
         return withAccount(new Holder(email, customerId, null, null, login(email)));
     }
 
-    /** Opens and activates an NGN account for the holder. */
     private Holder withAccount(Holder holder) throws Exception {
 
         String account =
@@ -503,6 +472,22 @@ class OperationsIntegrationTest {
                 .content("""
                         { "transactionId": "%s", "reason": "%s" }
                         """.formatted(transactionId, reason)));
+    }
+
+    @Test
+    void officersOnlyRequestAndSupervisorsOnlyApprove() throws Exception {
+
+        Holder esther = funded("esther", "1000");
+
+        requestAdjustment(checker, esther, "CREDIT", "50", "Supervisor trying to file")
+                .andExpect(status().isForbidden());
+
+        String requestId = adjustmentId(maker, esther, "CREDIT", "50", "Goodwill credit");
+
+        approve(maker, requestId).andExpect(status().isForbidden());
+        approve(checker, requestId).andExpect(status().isOk());
+
+        assertThat(balance(esther)).isEqualByComparingTo("1050");
     }
 
     private ResultActions requestAdjustment(Holder officer, Holder account, String direction, String amount, String reason)
@@ -589,7 +574,9 @@ class OperationsIntegrationTest {
     }
 
     private MockHttpServletRequestBuilder authorized(MockHttpServletRequestBuilder request, String token) {
-        return request.header("Authorization", "Bearer " + token);
+        return request
+                .header("Authorization", "Bearer " + token)
+                .header("X-Transaction-PIN", TEST_PIN);
     }
 
     private String register(String email, String phone) throws Exception {
@@ -617,6 +604,7 @@ class OperationsIntegrationTest {
 
         String response =
                 mockMvc.perform(post("/api/v1/auth/login")
+                                .header("X-Device-Id", TEST_DEVICE_ID)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("""
                                         { "email": "%s", "password": "Password123" }
@@ -624,6 +612,16 @@ class OperationsIntegrationTest {
                         .andExpect(status().isOk())
                         .andReturn().getResponse().getContentAsString();
 
-        return JsonPath.read(response, "$.accessToken");
+        String token = JsonPath.read(response, "$.accessToken");
+        withTransactionPin(token);
+        return token;
+    }
+
+    private void withTransactionPin(String token) throws Exception {
+
+        mockMvc.perform(post("/api/v1/security/pin")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{ \"pin\": \"" + TEST_PIN + "\" }"));
     }
 }

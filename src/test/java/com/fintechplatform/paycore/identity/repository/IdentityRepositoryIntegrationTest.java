@@ -221,18 +221,6 @@ class IdentityRepositoryIntegrationTest {
 
         identityRepository.saveAndFlush(passwordIdentity);
 
-        /*
-         * Social identity factory will be added when
-         * Google/Apple authentication is implemented.
-         *
-         * This test documents the database design:
-         *
-         * UNIQUE(customer_id, provider)
-         *
-         * rather than:
-         *
-         * UNIQUE(customer_id)
-         */
         assertThat(
                 identityRepository
                         .existsByCustomerAndProvider(

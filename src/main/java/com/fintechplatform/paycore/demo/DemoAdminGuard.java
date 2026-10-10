@@ -24,24 +24,12 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
-/**
- * The demo admin is shared by every visitor of the public preview, so no
- * visitor may lock the others out of it: it cannot be edited, suspended,
- * closed or have its roles changed, and nobody can end every session of
- * it at once. The demo recipient, which every visitor sends money to, is
- * protected the same way, and its account cannot be frozen, closed or
- * drained. Admin actions on any other customer work normally.
- */
 @Component
 @ConditionalOnProperty(name = "paycore.demo.enabled", havingValue = "true")
 public class DemoAdminGuard implements HandlerInterceptor {
 
     private static final AntPathMatcher PATHS = new AntPathMatcher();
 
-    /**
-     * Method and path pattern of every request that changes the customer
-     * named by {customerId}.
-     */
     private static final List<String[]> PROTECTED = List.of(
             new String[]{"PATCH", "/api/v1/customers/{customerId}"},
             new String[]{"DELETE", "/api/v1/customers/{customerId}"},
@@ -50,11 +38,6 @@ public class DemoAdminGuard implements HandlerInterceptor {
             new String[]{"POST", "/api/v1/admin/customers/{customerId}/roles/*/revoke"}
     );
 
-    /**
-     * Requests that would take the demo recipient's account out of use for
-     * every visitor: freezing or closing it, or draining it (which would
-     * make transfers into it impossible to reverse).
-     */
     private static final List<String[]> PROTECTED_RECIPIENT_ACCOUNT = List.of(
             new String[]{"POST", "/api/v1/admin/accounts/{accountId}/freeze"},
             new String[]{"POST", "/api/v1/admin/accounts/{accountId}/close"}
@@ -118,7 +101,6 @@ public class DemoAdminGuard implements HandlerInterceptor {
             );
         }
 
-        // Changing its own email would lock every visitor out of it.
         if ("PATCH".equals(method)
                 && OWN_PROFILE.equals(path)
                 && caller != null && staffIds.contains(caller)) {
@@ -150,11 +132,6 @@ public class DemoAdminGuard implements HandlerInterceptor {
         return true;
     }
 
-    /**
-     * Whether the request changes the demo recipient or its account. The
-     * recipient is only looked up for requests that match a rule, and never
-     * cached, since the seeder may recreate it.
-     */
     private boolean targetsDemoRecipient(String method, String path) {
 
         for (String[] rule : PROTECTED) {
@@ -184,10 +161,6 @@ public class DemoAdminGuard implements HandlerInterceptor {
         return false;
     }
 
-    /**
-     * The demo admin and the demo operations officers. Cached once all are
-     * found; they are seeded at startup and never deleted.
-     */
     private Set<UUID> demoStaffIds() {
 
         Set<UUID> cached = demoStaffIds;

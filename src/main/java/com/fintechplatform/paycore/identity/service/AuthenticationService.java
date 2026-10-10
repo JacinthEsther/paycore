@@ -3,6 +3,8 @@ package com.fintechplatform.paycore.identity.service;
 import com.fintechplatform.paycore.customer.entity.Customer;
 import com.fintechplatform.paycore.customer.exception.CustomerNotFoundException;
 import com.fintechplatform.paycore.customer.repository.CustomerRepository;
+import com.fintechplatform.paycore.device.entity.CustomerDevice;
+import com.fintechplatform.paycore.device.service.DeviceService;
 import com.fintechplatform.paycore.identity.dto.AuthenticationContext;
 import com.fintechplatform.paycore.identity.dto.IssuedRefreshToken;
 import com.fintechplatform.paycore.identity.dto.LoginRequest;
@@ -36,6 +38,7 @@ public class AuthenticationService {
     private final AccessTokenService accessTokenService;
     private final RefreshTokenService refreshTokenService;
     private final TransactionTemplate transactionTemplate;
+    private final DeviceService deviceService;
 
     public AuthenticationService(
             CustomerRepository customerRepository,
@@ -45,9 +48,11 @@ public class AuthenticationService {
             PasswordEncoder passwordEncoder,
             AccessTokenService accessTokenService,
             RefreshTokenService refreshTokenService,
-            TransactionTemplate transactionTemplate
+            TransactionTemplate transactionTemplate,
+            DeviceService deviceService
     ) {
         this.transactionTemplate = transactionTemplate;
+        this.deviceService = deviceService;
         this.customerRepository = customerRepository;
         this.identityService = identityService;
         this.loginSessionService = loginSessionService;
@@ -57,20 +62,6 @@ public class AuthenticationService {
         this.refreshTokenService = refreshTokenService;
     }
 
-    /**
-     * Built for heavy login traffic:
-     *
-     * - The customer is read together with their roles and permissions in
-     *   one query, so issuing the access token needs no further reads.
-     * - The BCrypt check runs outside any transaction. It is deliberately
-     *   slow CPU work; inside a transaction it would keep a pooled
-     *   database connection idle for the whole comparison.
-     * - Only the writes (session and refresh token) run in a transaction,
-     *   and only once the password is known to be right.
-     *
-     * Not @Transactional: the transaction is opened explicitly after the
-     * password check.
-     */
     public LoginResult login(
             LoginRequest request,
             AuthenticationContext context
@@ -117,11 +108,6 @@ public class AuthenticationService {
         );
     }
 
-    /**
-     * For a customer who proved who they are another way (Google sign-in):
-     * the same status check and the same session and tokens as a password
-     * login. Runs in the caller's transaction.
-     */
     public LoginResult startSessionFor(
             Customer customer,
             AuthenticationContext context
@@ -143,12 +129,20 @@ public class AuthenticationService {
         String sessionTokenHash =
                 sessionTokenService.hash(sessionToken);
 
+        CustomerDevice device =
+                deviceService.recognize(
+                        customer.getId(),
+                        context.deviceId(),
+                        context.userAgent()
+                );
+
         LoginSession session =
                 loginSessionService.createSession(
                         customer,
                         sessionTokenHash,
                         context.ipAddress(),
-                        context.userAgent()
+                        context.userAgent(),
+                        device
                 );
 
         AccessToken accessToken =
@@ -172,9 +166,6 @@ public class AuthenticationService {
         IssuedRefreshToken refreshToken =
                 refreshTokenService.rotate(rawRefreshToken);
 
-        // Refresh runs every few minutes for every active user, so the
-        // customer, roles and permissions come back in one query rather
-        // than one per role.
         Customer customer =
                 customerRepository
                         .findWithAuthoritiesById(
@@ -183,7 +174,6 @@ public class AuthenticationService {
                         .orElseThrow(InvalidRefreshTokenException::new);
 
         if (!canLogin(customer)) {
-            // Rolls back the rotation; the customer simply cannot refresh.
             throw new InvalidRefreshTokenException();
         }
 
@@ -196,11 +186,6 @@ public class AuthenticationService {
         );
     }
 
-    /**
-     * Revokes the session identified by the raw session token together
-     * with its refresh tokens. A missing token is a no-op so logout stays
-     * idempotent for clients that already discarded it.
-     */
     @Transactional
     public void logout(String rawToken) {
 

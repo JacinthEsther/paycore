@@ -14,14 +14,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/**
- * Keeps the emails PayCore sent so Developer Preview visitors, who sign up
- * with made-up addresses, can still open their verification link. Each
- * signed-in visitor only ever sees mail addressed to their own email.
- *
- * In memory and bounded: the latest few emails for the most recent
- * addresses. A restart empties it; the visitor then asks for a new link.
- */
 @Component
 @ConditionalOnProperty(name = "paycore.demo.enabled", havingValue = "true")
 public class DemoOutbox {
@@ -32,7 +24,6 @@ public class DemoOutbox {
     public record DemoEmail(String to, String subject, String body, Instant sentAt) {
     }
 
-    /** Least recently written address first, evicted beyond the limit. */
     private final Map<String, Deque<DemoEmail>> byAddress =
             new LinkedHashMap<>(16, 0.75f, true) {
                 @Override
@@ -59,7 +50,6 @@ public class DemoOutbox {
         }
     }
 
-    /** Newest first. */
     public synchronized List<DemoEmail> emailsTo(String address) {
         return new ArrayList<>(byAddress.getOrDefault(key(address), new ArrayDeque<>()));
     }

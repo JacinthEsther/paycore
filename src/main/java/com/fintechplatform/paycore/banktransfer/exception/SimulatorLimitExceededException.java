@@ -2,7 +2,6 @@ package com.fintechplatform.paycore.banktransfer.exception;
 
 import com.fintechplatform.paycore.ledger.domain.Money;
 
-/** Test Bank has sent the account as much pretend money as it may. */
 public class SimulatorLimitExceededException extends RuntimeException {
 
     public SimulatorLimitExceededException(Money limit, Money remaining) {

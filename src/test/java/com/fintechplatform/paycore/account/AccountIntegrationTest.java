@@ -35,10 +35,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/**
- * The account API end to end: authentication, permissions, ownership, the
- * KYC gate, staff status changes and the audit history.
- */
 @Testcontainers
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -99,10 +95,6 @@ class AccountIntegrationTest {
         }
     }
 
-    // ============================================================
-    // AUTHENTICATION AND THE KYC GATE
-    // ============================================================
-
     @Test
     void anonymousCallersShouldBeRejected() throws Exception {
 
@@ -130,19 +122,15 @@ class AccountIntegrationTest {
                         "$.id"
                 );
 
-        String adminToken = registerStaff("admin@example.com", "08011111119", RoleName.ADMIN);
+        String complianceToken = registerStaff("admin@example.com", "08011111119", RoleName.COMPLIANCE);
 
-        statusChange(adminToken, accountId, "activate", "Looks fine")
+        statusChange(complianceToken, accountId, "activate", "Looks fine")
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error").value("KYC_VERIFICATION_REQUIRED"));
 
         mockMvc.perform(authorized(get("/api/v1/accounts/{id}", accountId), token))
                 .andExpect(jsonPath("$.status").value("PENDING"));
     }
-
-    // ============================================================
-    // OPENING AND READING OWN ACCOUNTS
-    // ============================================================
 
     @Test
     void verifiedCustomerShouldOpenAndReadTheirAccount() throws Exception {
@@ -175,7 +163,6 @@ class AccountIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accountNumber").value(accountNumber));
 
-        // Opening is audited.
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT event_type FROM account_status_events WHERE account_id = ?::uuid",
                 String.class,
@@ -312,10 +299,6 @@ class AccountIntegrationTest {
                 .andExpect(status().isForbidden());
     }
 
-    // ============================================================
-    // STAFF
-    // ============================================================
-
     @Test
     void supportShouldReadButNotChangeAccounts() throws Exception {
 
@@ -337,32 +320,32 @@ class AccountIntegrationTest {
     }
 
     @Test
-    void adminShouldActivateFreezeUnfreezeAndCloseWithFullAuditTrail() throws Exception {
+    void complianceShouldActivateFreezeUnfreezeAndCloseWithFullAuditTrail() throws Exception {
 
         String accountId = openAccountWithNewCustomer();
-        String adminId = register("admin@example.com", "08011111121");
-        grantRole(adminId, RoleName.ADMIN);
-        String adminToken = login("admin@example.com");
+        String complianceId = register("admin@example.com", "08011111121");
+        grantRole(complianceId, RoleName.COMPLIANCE);
+        String complianceToken = login("admin@example.com");
 
-        statusChange(adminToken, accountId, "activate", "KYC verified")
+        statusChange(complianceToken, accountId, "activate", "KYC verified")
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("ACTIVE"));
 
-        statusChange(adminToken, accountId, "freeze", "Suspected fraud")
+        statusChange(complianceToken, accountId, "freeze", "Suspected fraud")
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("FROZEN"));
 
-        statusChange(adminToken, accountId, "unfreeze", "Customer verified by phone")
+        statusChange(complianceToken, accountId, "unfreeze", "Customer verified by phone")
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("ACTIVE"));
 
-        statusChange(adminToken, accountId, "close", "Customer request")
+        statusChange(complianceToken, accountId, "close", "Customer request")
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("CLOSED"))
                 .andExpect(jsonPath("$.closedAt").isNotEmpty());
 
         mockMvc.perform(authorized(
-                        get("/api/v1/admin/accounts/{id}/history", accountId), adminToken))
+                        get("/api/v1/admin/accounts/{id}/history", accountId), complianceToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(5)))
                 .andExpect(jsonPath("$[0].eventType").value("OPENED"))
@@ -374,7 +357,7 @@ class AccountIntegrationTest {
                 .andExpect(jsonPath("$[2].eventType").value("FROZEN"))
                 .andExpect(jsonPath("$[2].fromStatus").value("ACTIVE"))
                 .andExpect(jsonPath("$[2].toStatus").value("FROZEN"))
-                .andExpect(jsonPath("$[2].performedBy").value(adminId))
+                .andExpect(jsonPath("$[2].performedBy").value(complianceId))
                 .andExpect(jsonPath("$[2].reason").value("Suspected fraud"))
                 .andExpect(jsonPath("$[3].eventType").value("UNFROZEN"))
                 .andExpect(jsonPath("$[4].eventType").value("CLOSED"))
@@ -382,30 +365,29 @@ class AccountIntegrationTest {
     }
 
     @Test
-    void adminShouldGetConflictForInvalidTransition() throws Exception {
+    void complianceShouldGetConflictForInvalidTransition() throws Exception {
 
         String accountId = openAccountWithNewCustomer();
-        String adminToken = registerStaff("admin@example.com", "08011111122", RoleName.ADMIN);
+        String complianceToken = registerStaff("admin@example.com", "08011111122", RoleName.COMPLIANCE);
 
-        // A pending account cannot be frozen until it is activated.
-        statusChange(adminToken, accountId, "freeze", "Too early")
+        statusChange(complianceToken, accountId, "freeze", "Too early")
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("INVALID_ACCOUNT_STATE"));
 
-        statusChange(adminToken, accountId, "activate", "Verified")
+        statusChange(complianceToken, accountId, "activate", "Verified")
                 .andExpect(status().isOk());
 
-        statusChange(adminToken, accountId, "activate", "Twice")
+        statusChange(complianceToken, accountId, "activate", "Twice")
                 .andExpect(status().isConflict());
 
-        statusChange(adminToken, accountId, "unfreeze", "Not frozen")
+        statusChange(complianceToken, accountId, "unfreeze", "Not frozen")
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("INVALID_ACCOUNT_STATE"));
 
-        statusChange(adminToken, accountId, "close", "Closing")
+        statusChange(complianceToken, accountId, "close", "Closing")
                 .andExpect(status().isOk());
 
-        statusChange(adminToken, accountId, "freeze", "Too late")
+        statusChange(complianceToken, accountId, "freeze", "Too late")
                 .andExpect(status().isConflict());
     }
 
@@ -413,34 +395,33 @@ class AccountIntegrationTest {
     void statusChangeShouldRequireReason() throws Exception {
 
         String accountId = openAccountWithNewCustomer();
-        String adminToken = registerStaff("admin@example.com", "08011111123", RoleName.ADMIN);
+        String complianceToken = registerStaff("admin@example.com", "08011111123", RoleName.COMPLIANCE);
 
-        mockMvc.perform(authorized(post("/api/v1/admin/accounts/{id}/activate", accountId), adminToken)
+        mockMvc.perform(authorized(post("/api/v1/admin/accounts/{id}/activate", accountId), complianceToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{ \"reason\": \"   \" }"))
                 .andExpect(status().isBadRequest());
 
-        mockMvc.perform(authorized(get("/api/v1/admin/accounts/{id}", accountId), adminToken))
+        mockMvc.perform(authorized(get("/api/v1/admin/accounts/{id}", accountId), complianceToken))
                 .andExpect(jsonPath("$.status").value("PENDING"));
     }
 
     @Test
-    void adminShouldNotChangeTheirOwnAccount() throws Exception {
+    void complianceShouldNotChangeTheirOwnAccount() throws Exception {
 
-        String adminId = registerVerified("self@example.com", "08011111124");
-        grantRole(adminId, RoleName.ADMIN);
-        String adminToken = login("self@example.com");
+        String complianceId = registerVerified("self@example.com", "08011111124");
+        grantRole(complianceId, RoleName.COMPLIANCE);
+        String complianceToken = login("self@example.com");
 
         String accountId =
                 JsonPath.read(
-                        openAccount(adminToken, OPEN_NGN)
+                        openAccount(complianceToken, OPEN_NGN)
                                 .andExpect(status().isCreated())
                                 .andReturn().getResponse().getContentAsString(),
                         "$.id"
                 );
 
-        // Segregation of duties: nobody activates their own account.
-        statusChange(adminToken, accountId, "activate", "Approving myself")
+        statusChange(complianceToken, accountId, "activate", "Approving myself")
                 .andExpect(status().isForbidden());
     }
 
@@ -448,9 +429,9 @@ class AccountIntegrationTest {
     void customerShouldOpenNewAccountAfterClosure() throws Exception {
 
         String accountId = openAccountWithNewCustomer();
-        String adminToken = registerStaff("admin@example.com", "08011111125", RoleName.ADMIN);
+        String complianceToken = registerStaff("admin@example.com", "08011111125", RoleName.COMPLIANCE);
 
-        statusChange(adminToken, accountId, "close", "Customer request")
+        statusChange(complianceToken, accountId, "close", "Customer request")
                 .andExpect(status().isOk());
 
         String token = login("holder@example.com");
@@ -467,27 +448,19 @@ class AccountIntegrationTest {
     @Test
     void staffShouldGetNotFoundForUnknownIds() throws Exception {
 
-        String adminToken = registerStaff("admin@example.com", "08011111126", RoleName.ADMIN);
+        String complianceToken = registerStaff("admin@example.com", "08011111126", RoleName.COMPLIANCE);
 
         mockMvc.perform(authorized(
-                        get("/api/v1/admin/accounts/{id}", UUID.randomUUID()), adminToken))
+                        get("/api/v1/admin/accounts/{id}", UUID.randomUUID()), complianceToken))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("ACCOUNT_NOT_FOUND"));
 
         mockMvc.perform(authorized(
-                        get("/api/v1/admin/customers/{id}/accounts", UUID.randomUUID()), adminToken))
+                        get("/api/v1/admin/customers/{id}/accounts", UUID.randomUUID()), complianceToken))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("CUSTOMER_NOT_FOUND"));
     }
 
-    // ============================================================
-    // HELPERS
-    // ============================================================
-
-    /**
-     * Registers holder@example.com with verified KYC and opens an NGN
-     * account for them; returns the account id.
-     */
     private String openAccountWithNewCustomer() throws Exception {
 
         registerVerified("holder@example.com", "08099999999");
@@ -538,9 +511,8 @@ class AccountIntegrationTest {
 
         String customerId = register(email, phone);
 
-        // KYC review itself is covered by KycFlowIntegrationTest.
         jdbcTemplate.update(
-                "UPDATE kyc_profiles SET status = 'VERIFIED' WHERE customer_id = ?::uuid",
+                "UPDATE kyc_profiles SET status = 'VERIFIED', tier = 3 WHERE customer_id = ?::uuid",
                 customerId
         );
 

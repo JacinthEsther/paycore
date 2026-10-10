@@ -62,7 +62,6 @@ class KycControllerTest {
     @MockitoBean
     private KycService kycService;
 
-    // Needed by CurrentUserJwtAuthenticationConverter, which this slice loads.
     @MockitoBean
     private LoginSessionRepository loginSessionRepository;
 
@@ -72,10 +71,6 @@ class KycControllerTest {
     private final UUID customerId = UUID.randomUUID();
     private final UUID kycId = UUID.randomUUID();
 
-    /**
-     * Filters are disabled in this slice, so populate the context that
-     * @AuthenticationPrincipal reads from directly.
-     */
     @BeforeEach
     void authenticate() {
         SecurityContextHolder.getContext().setAuthentication(
@@ -288,8 +283,6 @@ class KycControllerTest {
                 .andExpect(jsonPath("$.provider").value("DOJAH"))
                 .andExpect(jsonPath("$.remainingAttempts").value(3));
 
-        // The connection's address is used; a client-supplied
-        // X-Forwarded-For header is ignored.
         verify(kycService).verifyBvn(
                 customerId,
                 new VerifyBvnRequest("22222222222", "Esther", "Test", "1995-01-01"),
@@ -492,7 +485,6 @@ class KycControllerTest {
                         new PageInfo(0, 20, 1, 1, false)
                 ));
 
-        // No paging params: defaults page=0, size=20.
         mockMvc.perform(get("/api/v1/kyc/{kycId}/bvn-attempts", kycId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.page.number").value(0))

@@ -32,10 +32,6 @@ public class RefreshToken {
     @Column(name = "token_hash", nullable = false, length = 64)
     private String tokenHash;
 
-    /**
-     * Every token produced by rotating the same login's refresh token
-     * shares one family, so reuse of any old token can revoke them all.
-     */
     @Column(name = "family_id", nullable = false)
     private UUID familyId;
 

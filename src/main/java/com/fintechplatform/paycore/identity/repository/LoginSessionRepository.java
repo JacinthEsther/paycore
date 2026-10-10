@@ -22,10 +22,8 @@ public interface LoginSessionRepository
             Customer customer
     );
 
-    /**
-     * The session and customer state checked on every authenticated
-     * request, in one query.
-     */
+    List<LoginSession> findByDeviceIdAndRevokedAtIsNull(UUID deviceId);
+
     @Query("""
             select new com.fintechplatform.paycore.identity.dto.SessionAccess(
                 c.id, c.status, s.expiresAt, s.revokedAt

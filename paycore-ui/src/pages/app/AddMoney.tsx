@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { api, ApiError, errorMessage } from '../../api/client';
-import type { Account, FundingAllowance, TestBankAccount, Transaction } from '../../api/types';
+import type { Account, FundingAllowance, Payment, TestBankAccount, Transaction } from '../../api/types';
 import { useAuth } from '../../auth/AuthContext';
 import { refreshBanking, useBanking } from '../../banking';
 import { ScreenTitle } from '../../components/Layout';
@@ -59,6 +59,7 @@ function BankTransferIn({ account }: { account: Account }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [received, setReceived] = useState<Transaction | null>(null);
+  const [lost, setLost] = useState<string | null>(null);
 
   const load = () =>
     api<TestBankAccount>(`/api/v1/simulator/test-bank/account?accountId=${account.id}`)
@@ -67,7 +68,6 @@ function BankTransferIn({ account }: { account: Account }) {
 
   useEffect(() => {
     void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account.id]);
 
   async function send(e: FormEvent) {
@@ -75,11 +75,14 @@ function BankTransferIn({ account }: { account: Account }) {
     setBusy(true);
     setError(null);
     setReceived(null);
+    setLost(null);
     try {
-      const credit = await api<Transaction>('/api/v1/simulator/test-bank/transfers', {
-        body: { destinationAccountNumber: account.accountNumber, amount: Number(amount), narration: narration.trim() || null },
-      });
-      setReceived(credit);
+      const credit = await api<Transaction | { error: string; message: string; sessionId: string }>(
+        '/api/v1/simulator/test-bank/transfers',
+        { body: { destinationAccountNumber: account.accountNumber, amount: Number(amount), narration: narration.trim() || null } },
+      );
+      if ('error' in credit) setLost(credit.sessionId);
+      else setReceived(credit);
       setAmount('');
       setNarration('');
       markDone('receive');
@@ -124,7 +127,8 @@ function BankTransferIn({ account }: { account: Account }) {
           <>
             <p className="muted small">
               Pretend you are in your other bank's app. Test Bank sends the money over the interbank rail with a NIP
-              session id; PayCore credits you when the rail reports it, exactly as it would for a real bank.
+              session id; PayCore credits you when the rail reports it, exactly as it would for a real bank. An
+              amount ending in <code>.95</code> loses the rail's notification, for reconciliation to find.
             </p>
             <div className="from-account">
               <span className="from-bank">
@@ -157,6 +161,13 @@ function BankTransferIn({ account }: { account: Account }) {
               </button>
             </form>
 
+            {lost && (
+              <Notice tone="warn" title="Sent, but PayCore was never told">
+                Test Bank sent the money, but the rail's notification to PayCore was lost, so nothing is credited yet.
+                The money is in PayCore's bank all the same: the next reconciliation of the bank rail finds session{' '}
+                <code className="wrap">{lost}</code> and operations have the rail deliver it again.
+              </Notice>
+            )}
             {received && (
               <Notice tone="good" title={`${formatMoney(received.amount, received.currency)} received`}>
                 From {received.counterparty?.name} · Test Bank. Reference <code>{received.reference}</code>.{' '}
@@ -176,6 +187,21 @@ function CardTopUp({ account }: { account: Account }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ message: string; reference?: string } | null>(null);
   const [funded, setFunded] = useState<Transaction | null>(null);
+  const [pending, setPending] = useState<Payment | null>(null);
+
+  async function refreshPending() {
+    if (!pending) return;
+    try {
+      const now = await api<Payment>(`/api/v1/payments/${pending.id}`);
+      setPending(now);
+      if (now.status === 'SUCCEEDED') {
+        refreshBanking();
+        void load();
+      }
+    } catch (err) {
+      setError({ message: errorMessage(err) });
+    }
+  }
 
   const load = () =>
     api<FundingAllowance>(`/api/v1/ledger/accounts/${account.id}/funding`)
@@ -184,7 +210,6 @@ function CardTopUp({ account }: { account: Account }) {
 
   useEffect(() => {
     void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account.id]);
 
   async function pay(e: FormEvent) {
@@ -192,11 +217,13 @@ function CardTopUp({ account }: { account: Account }) {
     setBusy(true);
     setError(null);
     setFunded(null);
+    setPending(null);
     try {
-      const result = await api<Transaction>(`/api/v1/ledger/accounts/${account.id}/fundings`, {
+      const result = await api<Transaction | Payment>(`/api/v1/ledger/accounts/${account.id}/fundings`, {
         body: { amount: Number(amount), currency: account.currency, idempotencyKey: newIdempotencyKey('topup') },
       });
-      setFunded(result);
+      if ('externalReference' in result) setPending(result);
+      else setFunded(result);
       setAmount('');
       refreshBanking();
       void load();
@@ -226,7 +253,7 @@ function CardTopUp({ account }: { account: Account }) {
       <form className="form" onSubmit={pay}>
         <Field
           label="Amount"
-          hint={`${formatMoney(allowance.remaining, allowance.currency)} of your ${formatMoney(allowance.limit, allowance.currency)} card limit left. Amounts ending in .99 are declined.`}
+          hint={`${formatMoney(allowance.remaining, allowance.currency)} of your ${formatMoney(allowance.limit, allowance.currency)} card limit left. Amounts ending in .99 are declined; .98 (charged, answer lost) and .97 (never arrived) simulate a timeout; .96 can only be settled by operations; .94 (charged N1 more) and .92 (never settled) are for reconciliation to find.`}
         >
           <div className="amount-input">
             <span>₦</span>
@@ -248,6 +275,18 @@ function CardTopUp({ account }: { account: Account }) {
           {busy ? 'Paying…' : 'Pay with test card'}
         </button>
       </form>
+      {pending && (
+        <Notice tone="warn" title="Confirming your payment">
+          The card provider did not answer in time, so we are checking with it before adding the money. Payment
+          reference <code>{pending.reference}</code>. If you were charged, the money is added automatically.
+          <br />
+          Status: <strong>{pending.status.toLowerCase().replace('_', ' ')}</strong>
+          {pending.status === 'FAILED' && pending.failureReason && <> · {pending.failureReason}</>}{' '}
+          <button className="btn btn-ghost btn-sm" onClick={refreshPending}>
+            Check status
+          </button>
+        </Notice>
+      )}
       {funded && (
         <Notice tone="good" title={`${formatMoney(funded.amount, funded.currency)} added`}>
           Payment reference <code>{funded.providerReference}</code>.{' '}

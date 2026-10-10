@@ -14,15 +14,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Dojah "Validate BVN" adapter: GET /api/v1/kyc/bvn with the customer's
- * claimed names and date of birth. Dojah answers with a per-field match,
- * e.g. {"entity":{"bvn":{"status":true},"first_name":{"status":true}}}.
- *
- * <p>A match on every supplied field is PASSED; an unknown BVN or any
- * mismatch is FAILED. Outages, bad credentials, empty wallet and rate
- * limits are provider errors, not verification results.
- */
 @Component
 @ConditionalOnProperty(
         name = "paycore.kyc.provider",
@@ -107,7 +98,6 @@ public class DojahKycProvider implements KycProvider {
         int status = response.status();
 
         if (status == 400 || status == 404) {
-            // Dojah reports an unknown BVN as {"error":"BVN not found"}.
             return failed(root, describeError(root, "BVN could not be found"));
         }
 
@@ -189,10 +179,6 @@ public class DojahKycProvider implements KycProvider {
         return error.isTextual() ? error.asText() : fallback;
     }
 
-    /**
-     * The documented Validate BVN response carries no reference; keep
-     * whichever one Dojah sends if that changes.
-     */
     private String extractReference(JsonNode root) {
 
         for (String field : List.of("reference", "reference_id", "request_id")) {
@@ -205,11 +191,6 @@ public class DojahKycProvider implements KycProvider {
         return null;
     }
 
-    /**
-     * Not wired to Dojah yet: its NIN response has not been verified
-     * against the sandbox, and guessing a vendor's response format would
-     * risk wrong PASSED/FAILED verdicts. Reported as a provider error.
-     */
     @Override
     public KycProviderResult verifyNin(
             KycVerificationRequest request

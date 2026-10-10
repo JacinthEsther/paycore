@@ -7,11 +7,6 @@ import jakarta.persistence.*;
 import java.time.Instant;
 import java.util.UUID;
 
-/**
- * Append-only record of a role being assigned to or revoked from a
- * customer. Ids are stored as plain UUIDs so reading the history never
- * loads customers or roles. Rows are never updated or deleted.
- */
 @Entity
 @Table(name = "role_assignment_events")
 public class RoleAssignmentEvent {
@@ -30,10 +25,6 @@ public class RoleAssignmentEvent {
     @Column(nullable = false, length = 20, updatable = false)
     private RoleAssignmentAction action;
 
-    /**
-     * The customer (admin) who made the change, or null when the system
-     * did, e.g. the default CUSTOMER role on registration.
-     */
     @Column(name = "performed_by", updatable = false)
     private UUID performedBy;
 

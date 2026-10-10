@@ -74,23 +74,6 @@ public class AccountService {
         this.transactionTemplate = transactionTemplate;
     }
 
-    /**
-     * Opens an account for the authenticated customer. The customer id
-     * always comes from the access token, never from the request body.
-     *
-     * The account opens PENDING; eligibility (verified KYC) is checked when
-     * staff activate it, so opening does no reads at all. The normal path
-     * is one attempt: INSERT the account and its OPENED event, commit.
-     * There are no "does it exist?" SELECTs first: the unique constraints
-     * decide, and a violation says which rule was hit. The loop only runs
-     * again after an account number collision, about one in 10^9 per
-     * existing account.
-     *
-     * Not @Transactional on purpose: each attempt runs in its own
-     * transaction, because in PostgreSQL a failed INSERT aborts the
-     * transaction it ran in, so a collision can only be retried in a fresh
-     * one.
-     */
     public AccountResponse openAccount(
             UUID customerId,
             OpenAccountRequest request
@@ -115,14 +98,11 @@ public class AccountService {
             } catch (DataIntegrityViolationException exception) {
 
                 if (ConstraintViolations.violates(exception, ACCOUNT_NUMBER_CONSTRAINT)) {
-                    // Generated number already in use: try a fresh one.
                     log.warn("Account number collision on attempt {}", attempt);
                     continue;
                 }
 
                 if (ConstraintViolations.violates(exception, OPEN_ACCOUNT_CONSTRAINT)) {
-                    // Already has an open account of this type and currency,
-                    // including one opened by a concurrent request.
                     throw new AccountAlreadyExistsException(request.type(), currency);
                 }
 
@@ -148,10 +128,6 @@ public class AccountService {
                 .toList();
     }
 
-    /**
-     * 404 for someone else's account as well as a missing one, so account
-     * ids cannot be probed.
-     */
     @Transactional(readOnly = true)
     public AccountResponse getOwnAccount(UUID customerId, UUID accountId) {
 
@@ -189,11 +165,6 @@ public class AccountService {
                 .toList();
     }
 
-    /**
-     * PENDING -> ACTIVE once the customer is eligible. Today eligibility is
-     * verified KYC; risk or product checks can be added here without
-     * touching account opening.
-     */
     @Transactional
     public AccountResponse activate(UUID accountId, UUID staffId, String reason) {
         return changeStatus(accountId, staffId, reason, AccountEventType.ACTIVATED, account -> {
@@ -224,14 +195,8 @@ public class AccountService {
             String accountNumber
     ) {
 
-        // A reference, not a SELECT: this request's access token was just
-        // checked against the customer's session and status, and the
-        // foreign key guarantees the customer exists.
         Customer customer = customerRepository.getReferenceById(customerId);
 
-        // Flush now so a unique constraint violation (duplicate account or
-        // account number) surfaces inside this attempt, where openAccount
-        // can tell which constraint it was.
         Account account =
                 accountRepository.saveAndFlush(
                         Account.open(customer, accountNumber, type, currency)
@@ -252,11 +217,6 @@ public class AccountService {
         return toResponse(account);
     }
 
-    /**
-     * Staff status changes. Staff cannot act on their own accounts, so no
-     * one can unfreeze themselves. Concurrent changes to the same account
-     * are caught by optimistic locking.
-     */
     private AccountResponse changeStatus(
             UUID accountId,
             UUID staffId,
@@ -333,10 +293,6 @@ public class AccountService {
         return code;
     }
 
-    /**
-     * Customer accounts only: system accounts are the ledger's, not
-     * something staff view, activate, freeze or close here.
-     */
     private Account findAccount(UUID accountId) {
 
         return accountRepository

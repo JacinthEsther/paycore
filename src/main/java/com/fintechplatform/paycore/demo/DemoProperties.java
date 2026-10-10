@@ -4,12 +4,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.util.Locale;
 
-/**
- * Developer Preview mode. When enabled, a shared admin account is seeded
- * so visitors of the public demo can walk through the admin side of the
- * flow. Its credentials are published by {@link DemoController}, so demo
- * mode must never be enabled on an environment holding real customer data.
- */
 @ConfigurationProperties(prefix = "paycore.demo")
 public class DemoProperties {
 
@@ -39,9 +33,6 @@ public class DemoProperties {
         return adminEmail;
     }
 
-    /**
-     * Stored the way registration stores emails.
-     */
     public String normalizedAdminEmail() {
         return adminEmail.trim().toLowerCase(Locale.ROOT);
     }

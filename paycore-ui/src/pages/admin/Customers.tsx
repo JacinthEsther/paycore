@@ -1,34 +1,42 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api, errorMessage } from '../../api/client';
-import type { Account, AccountEvent, CustomerPage, CustomerRoles, CustomerSummary, RoleEvent } from '../../api/types';
+import type { Account, AccountEvent, Customer, CustomerPage, CustomerRoles, CustomerSummary, RoleEvent } from '../../api/types';
 import { useAuth } from '../../auth/AuthContext';
 import { ScreenTitle } from '../../components/Layout';
 import { Card, formatAccountNumber, formatDate, Notice, StatusBadge } from '../../components/ui';
 import { markDone, useJourney } from '../../journey';
+import { ASSIGNABLE_ROLES, roleLabel, staffRoleOf } from '../../staff';
 import { AccountMoney } from './AccountMoney';
 import { FinishCard } from './FinishCard';
 
-const ROLES = ['CUSTOMER', 'SUPPORT', 'ADMIN', 'OPERATIONS'];
 
 export function Customers() {
   const { customerEmail } = useJourney();
-  const [search, setSearch] = useState('');
+  const [params] = useSearchParams();
+  const initial = params.get('q') ?? '';
+  const [search, setSearch] = useState(initial);
   const [page, setPage] = useState<CustomerPage | null>(null);
   const [selected, setSelected] = useState<CustomerSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (term: string) => {
     try {
-      setPage(await api<CustomerPage>(`/api/v1/admin/customers?size=50&search=${encodeURIComponent(term)}`));
+      const found = await api<CustomerPage>(`/api/v1/admin/customers?size=50&search=${encodeURIComponent(term)}`);
+      setPage(found);
       setError(null);
+      return found;
     } catch (e) {
       setError(errorMessage(e));
+      return null;
     }
   }, []);
 
   useEffect(() => {
-    void load('');
-  }, [load]);
+    void load(initial).then((found) => {
+      if (initial && found?.customers.length === 1) setSelected(found.customers[0]);
+    });
+  }, [load, initial]);
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -42,8 +50,7 @@ export function Customers() {
   return (
     <>
       <ScreenTitle title="Customers">
-        Admins manage roles and account status, each change with a reason in an append-only history. Operations
-        officers see balances and statements and can request adjustments; nobody can move money on their own.
+        Look anyone up. What you can change depends on your desk.
       </ScreenTitle>
 
       {error && <Notice tone="bad">{error}</Notice>}
@@ -74,7 +81,7 @@ export function Customers() {
                     <span className="people-side">
                       {c.roles.map((r) => (
                         <span key={r} className={`chip ${r === 'CUSTOMER' ? 'chip-soft' : ''}`}>
-                          {r}
+                          {roleLabel(r)}
                         </span>
                       ))}
                       <StatusBadge status={c.status} />
@@ -96,7 +103,7 @@ export function Customers() {
         ) : (
           <Card title="Select a customer">
             <p className="muted">
-              Pick someone to manage their roles and see their audit history. The account marked <span className="chip">You</span> is the
+              Pick someone to see what your desk can do for them. The account marked <span className="chip">You</span> is the
               one you registered.
             </p>
           </Card>
@@ -121,6 +128,7 @@ function CustomerDetail({ customer, onChanged }: { customer: CustomerSummary; on
   const [busy, setBusy] = useState(false);
 
   const isSelf = session?.customerId === customer.id;
+  const isStaffMember = staffRoleOf(roles) !== null;
   const base = `/api/v1/admin/customers/${customer.id}/roles`;
 
   const loadHistory = useCallback(async () => {
@@ -142,7 +150,7 @@ function CustomerDetail({ customer, onChanged }: { customer: CustomerSummary; on
     try {
       await action();
       setDone(label);
-      await Promise.all([loadHistory(), onChanged()]);
+      await Promise.all([manager ? loadHistory() : Promise.resolve(), onChanged()]);
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -185,15 +193,32 @@ function CustomerDetail({ customer, onChanged }: { customer: CustomerSummary; on
         <code>{customer.id}</code>
       </p>
 
+      <ContactDetails customerId={customer.id} isStaffMember={isStaffMember} onChanged={onChanged} />
+
+      {can('CUSTOMER_SUSPEND') && !isStaffMember && (
+        <>
+          <h3>Customer status</h3>
+          <div className="actions">
+            <button className="btn btn-ghost" disabled={busy || status !== 'ACTIVE'} onClick={() => changeStatus('suspend')}>
+              Suspend
+            </button>
+            <button className="btn btn-ghost" disabled={busy || status !== 'SUSPENDED'} onClick={() => changeStatus('reactivate')}>
+              Reactivate
+            </button>
+          </div>
+          <p className="muted small">A suspended customer cannot sign in until Compliance reactivates them.</p>
+        </>
+      )}
+
       {manager && (
         <>
-          {isSelf && <Notice tone="warn">This is you. Admins can't change their own roles, so the API will answer 403 here.</Notice>}
+          {isSelf && <Notice tone="warn">This is you. Nobody may change their own roles, so the API will answer 403 here.</Notice>}
 
           <h3>Roles</h3>
           <div className="role-row">
             {roles.map((r) => (
               <span key={r} className="chip chip-action">
-                {r}
+                {roleLabel(r)}
                 <button title={`Revoke ${r}`} aria-label={`Revoke ${r}`} disabled={busy || !reason.trim()} onClick={() => revoke(r)}>
                   ×
                 </button>
@@ -208,37 +233,28 @@ function CustomerDetail({ customer, onChanged }: { customer: CustomerSummary; on
             </label>
             <div className="actions">
               <select value={role} onChange={(e) => setRole(e.target.value)} aria-label="Role to assign">
-                {ROLES.map((r) => (
-                  <option key={r}>{r}</option>
+                {ASSIGNABLE_ROLES.map((r) => (
+                  <option key={r} value={r}>
+                    {roleLabel(r)}
+                  </option>
                 ))}
               </select>
               <button className="btn btn-primary" disabled={busy || !reason.trim()} onClick={assign}>
                 Assign role
               </button>
             </div>
-            <p className="muted small">To revoke a role, type a reason and then click × on it.</p>
+            <p className="muted small">
+              To revoke a role, type a reason and then click × on it. Some roles cannot be held together: an Operations
+              Officer cannot also be a Supervisor, and the System Admin holds no other staff role.
+            </p>
           </div>
-
-          <h3>Account status</h3>
-          <div className="actions">
-            <button className="btn btn-ghost" disabled={busy} onClick={() => changeStatus('suspend')}>
-              Suspend
-            </button>
-            <button className="btn btn-ghost" disabled={busy} onClick={() => changeStatus('reactivate')}>
-              Reactivate
-            </button>
-          </div>
-          <p className="muted small">
-            Only <em>active</em> customers can be suspended. New customers are still pending email verification, so expect a{' '}
-            <code>409</code> from the domain rules, and a suspended customer can no longer sign in.
-          </p>
         </>
       )}
 
       {done && <Notice tone="good">{done}</Notice>}
       {error && <Notice tone="bad">{error}</Notice>}
 
-      <AccountsPanel customerId={customer.id} />
+      {can('ACCOUNT_VIEW_ALL') && <AccountsPanel customerId={customer.id} />}
 
       {manager && <h3>Role history</h3>}
       <ol className="timeline">
@@ -261,9 +277,119 @@ function CustomerDetail({ customer, onChanged }: { customer: CustomerSummary; on
   );
 }
 
+function ContactDetails({
+  customerId,
+  isStaffMember,
+  onChanged,
+}: {
+  customerId: string;
+  isStaffMember: boolean;
+  onChanged: () => Promise<void>;
+}) {
+  const { can } = useAuth();
+  const [customer, setCustomer] = useState<Customer | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  useEffect(() => {
+    api<Customer>(`/api/v1/customers/${customerId}`)
+      .then((c) => {
+        setCustomer(c);
+        setEmail(c.email);
+        setPhone(c.phoneNumber);
+      })
+      .catch((e) => setError(errorMessage(e)));
+  }, [customerId]);
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    if (!customer) return;
+
+    const changes: Record<string, string> = {};
+    if (email.trim() !== customer.email) changes.email = email.trim();
+    if (phone.trim() !== customer.phoneNumber) {
+      changes.phoneNumber = phone.trim();
+      changes.countryCode = 'NG';
+    }
+
+    if (Object.keys(changes).length === 0) {
+      setEditing(false);
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const updated = await api<Customer>(`/api/v1/customers/${customerId}`, {
+        method: 'PATCH',
+        body: changes,
+      });
+      setCustomer(updated);
+      setEditing(false);
+      setDone('Contact details updated.');
+      await onChanged();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const editable = can('CUSTOMER_UPDATE') && !isStaffMember;
+
+  return (
+    <>
+      <h3>Contact details</h3>
+      {!customer ? (
+        <p className="muted small">{error ?? 'Loading…'}</p>
+      ) : editing ? (
+        <form className="form" onSubmit={save}>
+          <label className="field">
+            <span className="field-label">Email</span>
+            <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+          </label>
+          <label className="field">
+            <span className="field-label">Phone number</span>
+            <input required value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="e.g. 08031234567" />
+          </label>
+          <div className="actions">
+            <button type="button" className="btn btn-ghost" onClick={() => setEditing(false)} disabled={busy}>
+              Cancel
+            </button>
+            <button className="btn btn-primary" disabled={busy}>
+              Save
+            </button>
+          </div>
+        </form>
+      ) : (
+        <dl className="kv">
+          <dt>Email</dt>
+          <dd>{customer.email}</dd>
+          <dt>Phone</dt>
+          <dd>{customer.phoneNumber}</dd>
+        </dl>
+      )}
+      {customer && !editing && editable && (
+        <button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)}>
+          Edit contact details
+        </button>
+      )}
+      {customer && isStaffMember && can('CUSTOMER_UPDATE') && (
+        <p className="muted small">This is a staff member. Their details are managed by the System Admin, not from here.</p>
+      )}
+      {done && <Notice tone="good">{done}</Notice>}
+      {customer && error && <Notice tone="bad">{error}</Notice>}
+    </>
+  );
+}
+
 type AccountAction = 'activate' | 'freeze' | 'unfreeze' | 'close';
 
-/** Which staff actions the account's current status allows. */
 const ACTIONS: Record<Account['status'], AccountAction[]> = {
   PENDING: ['activate', 'close'],
   ACTIVE: ['freeze', 'close'],
@@ -406,9 +532,7 @@ function AccountsPanel({ customerId }: { customerId: string }) {
               </li>
             ))}
           </ul>
-          <p className="muted small">
-            Activation is refused with <code>403 KYC_VERIFICATION_REQUIRED</code> until the customer's KYC is verified.
-          </p>
+          {manager && <p className="muted small">An account can only be activated once its KYC is verified.</p>}
         </>
       )}
       {done && <Notice tone="good">{done}</Notice>}

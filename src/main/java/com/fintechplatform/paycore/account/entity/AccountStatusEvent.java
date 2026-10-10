@@ -8,11 +8,6 @@ import jakarta.persistence.*;
 import java.time.Instant;
 import java.util.UUID;
 
-/**
- * Append-only record of an account being opened or changing status, with
- * who did it and why. Ids are stored as plain UUIDs so reading the history
- * never loads accounts or customers. Rows are never updated or deleted.
- */
 @Entity
 @Table(name = "account_status_events")
 public class AccountStatusEvent {

@@ -4,14 +4,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.math.BigDecimal;
 
-/**
- * {@code paycore.funding.provider} picks the payment provider ("simulated"
- * or "none"); it is read by the provider's own condition, not here.
- *
- * {@code maxTotalPerAccount} caps what provider top-ups may add to one
- * account in total, in major units of its currency (500000 = NGN 500,000).
- * Reversed top-ups free their share again.
- */
 @ConfigurationProperties(prefix = "paycore.funding")
 public class FundingProperties {
 

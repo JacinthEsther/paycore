@@ -4,6 +4,7 @@ import com.fintechplatform.paycore.authorization.entity.Role;
 import com.fintechplatform.paycore.authorization.entity.RoleAssignmentEvent;
 import com.fintechplatform.paycore.authorization.entity.RoleName;
 import com.fintechplatform.paycore.authorization.enums.RoleAssignmentAction;
+import com.fintechplatform.paycore.authorization.exception.ConflictingRoleException;
 import com.fintechplatform.paycore.authorization.exception.RoleAlreadyAssignedException;
 import com.fintechplatform.paycore.authorization.exception.RoleNotAssignedException;
 import com.fintechplatform.paycore.authorization.exception.RoleNotFoundException;
@@ -175,6 +176,29 @@ class RoleAssignmentServiceIntegrationTest {
         entityManager.flush();
 
         assertThat(roleAssignmentService.history(target.getId()))
+                .hasSize(1);
+    }
+
+    @Test
+    void shouldRefuseRolesThatBreakSeparationOfDuties() {
+
+        Customer officer = customer("maker@example.com", "+2348011111115");
+
+        roleAssignmentService.assignRole(officer, RoleName.OPERATIONS_OFFICER, null, "Joined operations");
+
+        assertThatThrownBy(() ->
+                roleAssignmentService.assignRole(officer, RoleName.OPERATIONS_SUPERVISOR, null, "Also checker")
+        )
+                .isInstanceOf(ConflictingRoleException.class);
+
+        assertThatThrownBy(() ->
+                roleAssignmentService.assignRole(officer, RoleName.ADMIN, null, "Also admin")
+        )
+                .isInstanceOf(ConflictingRoleException.class);
+
+        entityManager.flush();
+
+        assertThat(roleAssignmentService.history(officer.getId()))
                 .hasSize(1);
     }
 

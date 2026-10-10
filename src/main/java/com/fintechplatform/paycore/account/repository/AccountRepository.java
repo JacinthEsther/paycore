@@ -18,18 +18,9 @@ public interface AccountRepository
 
     Optional<Account> findByAccountNumber(String accountNumber);
 
-    /**
-     * The id only, without loading the account: a caller that goes on to
-     * lock it must not already hold an unlocked copy, which Hibernate would
-     * keep instead of the state read under the lock.
-     */
     @Query("SELECT a.id FROM Account a WHERE a.accountNumber = :accountNumber")
     Optional<UUID> findIdByAccountNumber(@Param("accountNumber") String accountNumber);
 
-    /**
-     * Looks an account up only if it belongs to the customer, so ownership
-     * is part of the query rather than a check someone can forget.
-     */
     Optional<Account> findByIdAndCustomerId(UUID id, UUID customerId);
 
     List<Account> findByCustomerIdOrderByCreatedAtAsc(UUID customerId);
@@ -38,12 +29,6 @@ public interface AccountRepository
 
     List<Account> findByCustomerIsNullOrderByTypeAscCurrencyAsc();
 
-    /**
-     * Creates the system account of this type and currency unless it
-     * already exists. ON CONFLICT against uk_accounts_system_type_currency
-     * makes concurrent first uses safe, and unlike a failed INSERT it does
-     * not abort the surrounding transaction.
-     */
     @Modifying
     @Query(
             value = """
@@ -59,19 +44,10 @@ public interface AccountRepository
     )
     int createSystemAccountIfMissing(@Param("type") String type, @Param("currency") String currency);
 
-    /**
-     * SELECT ... FOR UPDATE: holds the row lock until the transaction ends,
-     * so two transfers from the same account run one after the other and
-     * the second sees the first one's debit.
-     */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT a FROM Account a WHERE a.id = :accountId")
     Optional<Account> findByIdForUpdate(@Param("accountId") UUID accountId);
 
-    /**
-     * As {@link #findByIdForUpdate}, but only the customer's own account, so
-     * the ownership check and the lock happen in one statement.
-     */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT a FROM Account a WHERE a.id = :accountId AND a.customer.id = :customerId")
     Optional<Account> findByIdAndCustomerIdForUpdate(

@@ -311,9 +311,6 @@ class RefreshTokenServiceTest {
         );
     }
 
-    /**
-     * Mimics persist: the UUIDv7 generator assigns the id on save.
-     */
     private void stubSaveAssigningId() {
 
         when(refreshTokenRepository.save(any(RefreshToken.class)))

@@ -2,11 +2,6 @@ import { useEffect, useState } from 'react';
 import { clearCalls, getCalls, onCallsChange, type ApiCall } from '../api/client';
 import { HttpStatus } from './ui';
 
-/**
- * Docked panel listing every request the UI made: method, path, whether a
- * bearer token was sent, the status the backend returned and the body.
- * Passwords, BVNs and NINs are masked and tokens shortened before display.
- */
 export function ApiInspector() {
   const [calls, setCalls] = useState<ApiCall[]>(getCalls);
   const [open, setOpen] = useState(false);

@@ -4,6 +4,8 @@ import com.fintechplatform.paycore.authorization.dto.CustomerRolesResponse;
 import com.fintechplatform.paycore.authorization.dto.RoleAssignmentEventResponse;
 import com.fintechplatform.paycore.authorization.entity.Role;
 import com.fintechplatform.paycore.authorization.entity.RoleAssignmentEvent;
+import com.fintechplatform.paycore.authorization.entity.RoleName;
+import com.fintechplatform.paycore.authorization.exception.ConflictingRoleException;
 import com.fintechplatform.paycore.authorization.exception.RoleAlreadyAssignedException;
 import com.fintechplatform.paycore.authorization.exception.RoleNotAssignedException;
 import com.fintechplatform.paycore.authorization.exception.RoleNotFoundException;
@@ -22,15 +24,6 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
-/**
- * The only place roles should be assigned or revoked: every change is
- * recorded in role_assignment_events in the same transaction, so the
- * current state and its history cannot drift apart.
- *
- * <p>Role changes reach the customer's permissions when their next access
- * token is issued, so a revoked role can stay usable until the current
- * access token expires.
- */
 @Service
 public class RoleAssignmentService {
 
@@ -48,20 +41,12 @@ public class RoleAssignmentService {
         this.customerRepository = customerRepository;
     }
 
-    // ============================================================
-    // ADMIN OPERATIONS
-    // ============================================================
-
     @Transactional(readOnly = true)
     public CustomerRolesResponse getRoles(UUID customerId) {
 
         return toResponse(findCustomer(customerId));
     }
 
-    /**
-     * Admins cannot change their own roles, so no one can grant
-     * themselves extra access or remove their own ADMIN by mistake.
-     */
     @Transactional
     public CustomerRolesResponse assignRole(
             UUID customerId,
@@ -129,16 +114,6 @@ public class RoleAssignmentService {
                 .toList();
     }
 
-    // ============================================================
-    // CORE OPERATIONS
-    // ============================================================
-
-    /**
-     * The customer must already be persisted (it needs an id).
-     *
-     * @param performedBy the acting admin's customer id, or null when the
-     *                    system assigns the role
-     */
     @Transactional
     public void assignRole(
             Customer customer,
@@ -152,6 +127,15 @@ public class RoleAssignmentService {
         if (customer.getRoles().contains(role)) {
             throw new RoleAlreadyAssignedException(roleName);
         }
+
+        customer.getRoles()
+                .stream()
+                .map(Role::getName)
+                .filter(RoleName.conflictsWith(roleName)::contains)
+                .findFirst()
+                .ifPresent(held -> {
+                    throw new ConflictingRoleException(roleName, held);
+                });
 
         customer.assignRole(role);
 

@@ -30,12 +30,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
-/**
- * Runs the prod profile on a real Tomcat (MockMvc bypasses Tomcat, so it
- * cannot exercise RemoteIpValve). The test client connects over loopback,
- * which is inside the default trusted-proxy range, so it plays the role of
- * the load balancer.
- */
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("prod")
@@ -111,8 +105,6 @@ class ForwardedHeadersIntegrationTest {
     @Test
     void shouldIgnoreAddressesForgedByTheClient() {
 
-        // The client sent "X-Forwarded-For: 6.6.6.6"; the proxy appended the
-        // address it actually saw. The right-most untrusted entry wins.
         String sessionId =
                 loginSessionId(forwardedFor("6.6.6.6, 203.0.113.9"));
 
@@ -122,7 +114,6 @@ class ForwardedHeadersIntegrationTest {
     @Test
     void shouldSkipTrustedProxiesInTheChain() {
 
-        // client -> edge proxy (10.0.0.5) -> load balancer (loopback)
         String sessionId =
                 loginSessionId(forwardedFor("203.0.113.9, 10.0.0.5"));
 
@@ -151,7 +142,6 @@ class ForwardedHeadersIntegrationTest {
         HttpHeaders auth = new HttpHeaders();
         auth.setBearerAuth(accessToken);
 
-        // The KYC profile was created at registration, so it only needs starting.
         assertThat(restTemplate.exchange(
                 "/api/v1/kyc/start",
                 org.springframework.http.HttpMethod.POST,
@@ -179,7 +169,6 @@ class ForwardedHeadersIntegrationTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
 
-        // Keyed on the real client's /64, not the proxy and not the forgery.
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT ip_address FROM kyc_verifications", String.class
         )).isEqualTo("2001:db8:1:2::/64");

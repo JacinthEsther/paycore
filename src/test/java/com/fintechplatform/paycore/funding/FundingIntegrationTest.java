@@ -1,9 +1,9 @@
 package com.fintechplatform.paycore.funding;
 
+import com.fintechplatform.paycore.funding.service.FundingOutcome;
 import com.fintechplatform.paycore.funding.service.FundingService;
 import com.fintechplatform.paycore.ledger.dto.request.FundAccountRequest;
 import com.fintechplatform.paycore.ledger.domain.Counterparty;
-import com.fintechplatform.paycore.ledger.dto.response.TransactionResponse;
 import com.fintechplatform.paycore.ledger.service.InboundTransfer;
 import com.fintechplatform.paycore.ledger.service.LedgerService;
 import com.fintechplatform.paycore.ledger.exception.FundingLimitExceededException;
@@ -49,14 +49,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/**
- * Customer top-ups through the simulated provider, end to end against
- * PostgreSQL: the double-entry posting, declines, idempotency, the
- * per-account limit (also under concurrency), ownership and account states,
- * and the database's own guarantees for provider deposits.
- *
- * The limit is NGN 1,000 here so it is quick to reach.
- */
 @Testcontainers
 @SpringBootTest(properties = {
         "paycore.funding.provider=simulated",
@@ -83,6 +75,9 @@ class FundingIntegrationTest {
 
     private static final AtomicInteger PHONES = new AtomicInteger(3_000_000);
 
+    private static final String TEST_DEVICE_ID = "integration-test-device";
+    private static final String TEST_PIN = "2580";
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -100,10 +95,10 @@ class FundingIntegrationTest {
     @BeforeEach
     void cleanDatabase() throws Exception {
 
+        jdbcTemplate.execute("TRUNCATE ledger_entries, ledger_transactions CASCADE");
+
         for (String table : new String[]{
                 "operations_requests",
-                "ledger_entries",
-                "ledger_transactions",
                 "account_status_events",
                 "accounts",
                 "kyc_verifications",
@@ -120,12 +115,8 @@ class FundingIntegrationTest {
             jdbcTemplate.execute("DELETE FROM " + table);
         }
 
-        admin = staff(activeHolder("admin"), "ADMIN");
+        admin = staff(activeHolder("admin"), "COMPLIANCE");
     }
-
-    // ============================================================
-    // A TOP-UP
-    // ============================================================
 
     @Test
     void topUpShouldCreditTheAccountAgainstSettlement() throws Exception {
@@ -153,7 +144,6 @@ class FundingIntegrationTest {
 
         assertThat(balance(esther)).isEqualByComparingTo("250.50");
 
-        // The customer initiated it; no staff note, the provider instead.
         assertThat(jdbcTemplate.queryForMap(
                 "SELECT initiated_by::text AS by, staff_note, provider FROM ledger_transactions WHERE id = ?::uuid",
                 id
@@ -162,7 +152,6 @@ class FundingIntegrationTest {
                 .containsEntry("staff_note", null)
                 .containsEntry("provider", "SIMULATED");
 
-        // PayCore's settlement account holds the money it now owes Esther.
         assertThat(settlementBalance()).isEqualByComparingTo("250.50");
     }
 
@@ -182,7 +171,6 @@ class FundingIntegrationTest {
                 .andExpect(jsonPath("$.staffNote").isEmpty())
                 .andExpect(jsonPath("$.initiatedBy").value(esther.customerId()));
 
-        // The customer's own statement shows it like any other credit.
         mockMvc.perform(authorized(get("/api/v1/ledger/accounts/{id}/statement", esther.accountId()), esther.token()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.lines[0].transactionType").value("DEPOSIT"))
@@ -202,10 +190,6 @@ class FundingIntegrationTest {
         assertThat(balance(esther)).isEqualByComparingTo("0");
         assertThat(transactionCount()).isZero();
     }
-
-    // ============================================================
-    // IDEMPOTENCY
-    // ============================================================
 
     @Test
     void retryShouldReturnTheSameTopUpAndChargeOnce() throws Exception {
@@ -234,7 +218,6 @@ class FundingIntegrationTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("IDEMPOTENCY_KEY_REUSED"));
 
-        // A transfer key is not a top-up key.
         mockMvc.perform(authorized(post("/api/v1/ledger/accounts/{id}/transfers", esther.accountId()), esther.token())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -262,10 +245,6 @@ class FundingIntegrationTest {
         assertThat(balance(esther)).isEqualByComparingTo("100");
         assertThat(balance(john)).isEqualByComparingTo("100");
     }
-
-    // ============================================================
-    // THE LIMIT
-    // ============================================================
 
     @Test
     void topUpsShouldStopAtTheLimit() throws Exception {
@@ -300,7 +279,6 @@ class FundingIntegrationTest {
         Holder esther = activeHolder("esther");
         Holder john = activeHolder("john");
 
-        // Transfers in, from other banks or other customers, do not use up the limit.
         receiveFromOtherBank(esther, "5000", "session-0001");
         receiveFromOtherBank(john, "200", "session-0002");
         mockMvc.perform(authorized(post("/api/v1/ledger/accounts/{id}/transfers", john.accountId()), john.token())
@@ -323,7 +301,6 @@ class FundingIntegrationTest {
 
         allowance(esther).andExpect(jsonPath("$.remaining").value(0.0));
 
-        // A reversed top-up (a chargeback, maker-checker approved) frees its share again.
         reverseThroughOperations(topUp, "Chargeback");
 
         allowance(esther)
@@ -351,14 +328,17 @@ class FundingIntegrationTest {
 
         List<Object> outcomes = runTogether(tasks);
 
-        assertThat(outcomes).filteredOn(TransactionResponse.class::isInstance).hasSize(3);
+        assertThat(outcomes)
+                .filteredOn(o -> o instanceof FundingOutcome outcome && outcome.isCredited())
+                .hasSize(3);
         assertThat(outcomes).filteredOn(FundingLimitExceededException.class::isInstance).hasSize(3);
         assertThat(balance(esther)).isEqualByComparingTo("900");
-    }
 
-    // ============================================================
-    // OWNERSHIP, STATES AND INPUT
-    // ============================================================
+        assertThat(jdbcTemplate.queryForList("SELECT status FROM payments", String.class))
+                .filteredOn("SUCCEEDED"::equals).hasSize(3);
+        assertThat(jdbcTemplate.queryForList("SELECT status FROM payments", String.class))
+                .allMatch(status -> status.equals("SUCCEEDED") || status.equals("NEEDS_REVIEW"));
+    }
 
     @Test
     void anotherCustomersAccountShouldNotBeFound() throws Exception {
@@ -423,10 +403,6 @@ class FundingIntegrationTest {
         assertThat(transactionCount()).isZero();
     }
 
-    // ============================================================
-    // DATABASE GUARANTEES
-    // ============================================================
-
     @Test
     void oneProviderPaymentCanOnlyBeCreditedOnce() throws Exception {
 
@@ -452,15 +428,10 @@ class FundingIntegrationTest {
                 .isInstanceOf(DataIntegrityViolationException.class)
                 .hasMessageContaining("ck_ledger_transactions_provider_reference_pair");
 
-        // Staff deposits still need their note.
         assertThatThrownBy(() -> insertProviderDeposit(admin.customerId(), "key-staff-0001", null, null, null))
                 .isInstanceOf(DataIntegrityViolationException.class)
                 .hasMessageContaining("ck_ledger_transactions_staff_note");
     }
-
-    // ============================================================
-    // HELPERS
-    // ============================================================
 
     private record Holder(
             String email,
@@ -474,16 +445,12 @@ class FundingIntegrationTest {
         }
     }
 
-    /**
-     * A customer with verified KYC and an ACTIVE NGN account, set directly
-     * (KYC review and activation have their own tests).
-     */
     private Holder activeHolder(String name) throws Exception {
 
         String email = name + "@example.com";
         String customerId = register(email, "0803" + PHONES.incrementAndGet());
 
-        jdbcTemplate.update("UPDATE kyc_profiles SET status = 'VERIFIED' WHERE customer_id = ?::uuid", customerId);
+        jdbcTemplate.update("UPDATE kyc_profiles SET status = 'VERIFIED', tier = 3 WHERE customer_id = ?::uuid", customerId);
 
         String token = login(email);
 
@@ -533,7 +500,6 @@ class FundingIntegrationTest {
                 .andExpect(jsonPath("$.accountId").value(holder.accountId()));
     }
 
-    /** Money in from another bank, as the rail would report it. */
     private void receiveFromOtherBank(Holder holder, String amount, String sessionId) {
 
         ledgerService.receiveInboundTransfer(new InboundTransfer(
@@ -542,11 +508,10 @@ class FundingIntegrationTest {
         ));
     }
 
-    /** One operations officer requests the reversal, another approves it. */
     private void reverseThroughOperations(String transactionId, String reason) throws Exception {
 
-        Holder officer = staff(activeHolder("officer"), "OPERATIONS");
-        Holder supervisor = staff(activeHolder("supervisor"), "OPERATIONS");
+        Holder officer = staff(activeHolder("officer"), "OPERATIONS_OFFICER");
+        Holder supervisor = staff(activeHolder("supervisor"), "OPERATIONS_SUPERVISOR");
 
         String request =
                 mockMvc.perform(authorized(post("/api/v1/ops/requests/reversals"), officer.token())
@@ -614,10 +579,6 @@ class FundingIntegrationTest {
         return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM ledger_transactions", Integer.class);
     }
 
-    /**
-     * Starts every task at the same moment and returns each result, or the
-     * exception it threw.
-     */
     private List<Object> runTogether(List<Callable<Object>> tasks) throws Exception {
 
         ExecutorService pool = Executors.newFixedThreadPool(Math.min(tasks.size(), 8));
@@ -651,7 +612,9 @@ class FundingIntegrationTest {
     }
 
     private MockHttpServletRequestBuilder authorized(MockHttpServletRequestBuilder request, String token) {
-        return request.header("Authorization", "Bearer " + token);
+        return request
+                .header("Authorization", "Bearer " + token)
+                .header("X-Transaction-PIN", TEST_PIN);
     }
 
     private String register(String email, String phone) throws Exception {
@@ -679,6 +642,7 @@ class FundingIntegrationTest {
 
         String response =
                 mockMvc.perform(post("/api/v1/auth/login")
+                                .header("X-Device-Id", TEST_DEVICE_ID)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("""
                                         { "email": "%s", "password": "Password123" }
@@ -686,6 +650,16 @@ class FundingIntegrationTest {
                         .andExpect(status().isOk())
                         .andReturn().getResponse().getContentAsString();
 
-        return JsonPath.read(response, "$.accessToken");
+        String token = JsonPath.read(response, "$.accessToken");
+        withTransactionPin(token);
+        return token;
+    }
+
+    private void withTransactionPin(String token) throws Exception {
+
+        mockMvc.perform(post("/api/v1/security/pin")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{ \"pin\": \"" + TEST_PIN + "\" }"));
     }
 }

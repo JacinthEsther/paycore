@@ -7,7 +7,6 @@ import { ScreenTitle } from '../../components/Layout';
 import { typeLabel, TransactionList } from '../../components/TransactionList';
 import { formatAccountNumber, formatDate, formatMoney, Icon, Notice } from '../../components/ui';
 
-/** First and last day of the month `back` months ago, as ISO dates (local). */
 function monthRange(back: number) {
   const now = new Date();
   const first = new Date(now.getFullYear(), now.getMonth() - back, 1);

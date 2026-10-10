@@ -40,7 +40,6 @@ public class Customer {
     @Column(nullable = false, length = 255)
     private String email;
 
-    /** Null for a customer created through Google sign-in until they add one. */
     @Column(name = "phone_number", length = 20)
     private String phoneNumber;
 
@@ -265,10 +264,6 @@ public class Customer {
         return updatedAt;
     }
 
-    /**
-     * Low-level state change only. Application code must go through
-     * RoleAssignmentService so the change is recorded in the audit trail.
-     */
     public void assignRole(Role role) {
         roles.add(role);
     }

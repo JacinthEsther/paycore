@@ -94,7 +94,6 @@ class AuthenticationIntegrationTest {
     @BeforeEach
     void cleanDatabase() {
 
-        // Registration creates a KYC profile for every customer.
         kycProfileRepository.deleteAll();
         refreshTokenRepository.deleteAll();
         loginSessionRepository.deleteAll();

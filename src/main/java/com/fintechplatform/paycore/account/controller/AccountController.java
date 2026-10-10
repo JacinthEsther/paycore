@@ -14,11 +14,6 @@ import java.net.URI;
 import java.util.List;
 import java.util.UUID;
 
-/**
- * Customer self-service. Every endpoint works on the caller's own accounts:
- * the customer id comes from the access token, never from the request, so
- * the permission (RBAC) and ownership are both enforced.
- */
 @RestController
 @RequestMapping("/api/v1/accounts")
 public class AccountController {

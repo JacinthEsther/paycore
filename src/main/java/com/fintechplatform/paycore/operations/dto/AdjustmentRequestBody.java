@@ -9,12 +9,6 @@ import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.util.UUID;
 
-/**
- * A request to correct a customer account by hand: CREDIT gives the
- * customer money, DEBIT takes it, against PayCore's settlement account.
- * reason is for staff only; customerDescription is what the customer
- * reads (default "Account adjustment").
- */
 public record AdjustmentRequestBody(
 
         @NotNull(message = "Account is required")

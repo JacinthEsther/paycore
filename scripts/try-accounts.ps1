@@ -1,18 +1,3 @@
-<#
-Walks through the account flow against a locally running PayCore API:
-
-  customer registers -> opens account (PENDING)
-  admin tries to activate -> refused, KYC not verified
-  customer completes KYC -> admin approves it
-  admin activates (ACTIVE) -> freezes -> unfreezes
-  customer lists accounts; admin reads the audit history
-  plus: duplicate account (409) and another customer's account (404)
-
-Start the API first, in demo mode with simulated KYC (see README), then:
-
-  powershell -ExecutionPolicy Bypass -File scripts\try-accounts.ps1
-  powershell -ExecutionPolicy Bypass -File scripts\try-accounts.ps1 -Api http://localhost:8080
-#>
 param(
     [string]$Api = "http://localhost:8081",
     [string]$AdminEmail = "admin@paycore.demo",
@@ -32,7 +17,6 @@ function Call([string]$Method, [string]$Path, [string]$Token, $Body) {
     Invoke-RestMethod @params
 }
 
-# Calls that are supposed to fail: returns "<status> <error code>".
 function CallExpectingError([string]$Method, [string]$Path, [string]$Token, $Body) {
     try {
         Call $Method $Path $Token $Body | Out-Null
@@ -42,7 +26,6 @@ function CallExpectingError([string]$Method, [string]$Path, [string]$Token, $Bod
         $status = [int]$response.StatusCode
         $body = $_.ErrorDetails.Message
         if (-not $body) {
-            # Windows PowerShell 5.1 leaves ErrorDetails empty; read the body.
             try {
                 $reader = New-Object System.IO.StreamReader($response.GetResponseStream())
                 $body = $reader.ReadToEnd()
@@ -72,7 +55,6 @@ function Register([string]$FirstName, [string]$LastName) {
 $reason = @{ reason = "Local test" }
 
 Step "Customer registers and signs in"
-# The simulated KYC provider knows one person: John Doe, born 1990-01-01.
 $customer = Register "John" "Doe"
 Write-Host "customer $($customer.Email)  id $($customer.Id)"
 

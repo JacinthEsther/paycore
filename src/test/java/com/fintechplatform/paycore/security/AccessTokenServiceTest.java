@@ -140,7 +140,7 @@ class AccessTokenServiceTest {
         Authentication authentication = converter.convert(jwt);
 
         assertThat(authentication.getPrincipal())
-                .isEqualTo(new CurrentUser(customerId));
+                .isEqualTo(new CurrentUser(customerId, sessionId));
 
         assertThat(authentication.getAuthorities())
                 .extracting(GrantedAuthority::getAuthority)

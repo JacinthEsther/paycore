@@ -15,11 +15,6 @@ public interface CustomerRepository
 
     Optional<Customer> findByEmail(String email);
 
-    /**
-     * The customer with roles and permissions already loaded, in one query,
-     * for issuing access tokens. Without it, reading the permissions costs
-     * one query for the roles plus one per role.
-     */
     @Query("""
             select c from Customer c
             left join fetch c.roles r

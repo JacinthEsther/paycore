@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, errorMessage } from '../../api/client';
-import type { BvnAttempts, KycReviewItem, KycReviewQueue, KycStatus } from '../../api/types';
+import { useSearchParams } from 'react-router-dom';
+import { api, errorMessage, openFile } from '../../api/client';
+import type { BvnAttempts, KycDocumentSummary, KycReviewItem, KycReviewQueue, KycStatus } from '../../api/types';
 import { ScreenTitle } from '../../components/Layout';
 import { Card, formatDate, humanize, Notice, StatusBadge } from '../../components/ui';
 import { markDone, useJourney } from '../../journey';
 import { FinishCard } from './FinishCard';
+import { TierUpgrades } from './TierUpgrades';
 
 const FILTERS: (KycStatus | 'ALL')[] = ['ALL', 'SUBMITTED', 'UNDER_REVIEW', 'ADDITIONAL_INFO_REQUIRED', 'VERIFIED', 'REJECTED'];
 
@@ -12,6 +14,8 @@ export function ReviewQueue() {
   const { customerEmail } = useJourney();
   const [filter, setFilter] = useState<KycStatus | 'ALL'>('ALL');
   const [queue, setQueue] = useState<KycReviewQueue | null>(null);
+  const [params] = useSearchParams();
+  const wanted = params.get('email');
   const [openId, setOpenId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,14 +33,17 @@ export function ReviewQueue() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    const match = queue?.profiles.find((p) => p.customerEmail === wanted);
+    if (match) setOpenId(match.kycId);
+  }, [queue, wanted]);
+
   const mine = queue?.profiles.find((p) => p.customerEmail === customerEmail);
 
   return (
     <>
       <ScreenTitle title="KYC reviews">
-        These endpoints need the <code>KYC_REVIEW</code> permission, which is exactly why your customer token got{' '}
-        <code>403</code>. The workflow runs <code>SUBMITTED → UNDER_REVIEW →</code> approve, reject or request more
-        information. Every decision records who made it and why.
+        Check each applicant's ID and BVN or NIN result, then decide.
       </ScreenTitle>
 
       {mine && (mine.status === 'SUBMITTED' || mine.status === 'UNDER_REVIEW') && (
@@ -44,6 +51,8 @@ export function ReviewQueue() {
           {mine.customerName} ({mine.customerEmail}) is <strong>{humanize(mine.status)}</strong>. Open it below to review it.
         </Notice>
       )}
+
+      <TierUpgrades />
 
       <div className="filters" role="tablist" aria-label="Filter by status">
         {FILTERS.map((f) => (
@@ -101,6 +110,13 @@ function ReviewPanel({ item, onChanged }: { item: KycReviewItem; onChanged: () =
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [attempts, setAttempts] = useState<BvnAttempts | null>(null);
+  const [documents, setDocuments] = useState<KycDocumentSummary[] | null>(null);
+
+  useEffect(() => {
+    api<KycDocumentSummary[]>(`/api/v1/kyc/${item.kycId}/documents`)
+      .then(setDocuments)
+      .catch(() => setDocuments([]));
+  }, [item.kycId]);
 
   async function act(path: string, body?: unknown, decision = false) {
     setBusy(true);
@@ -134,7 +150,27 @@ function ReviewPanel({ item, onChanged }: { item: KycReviewItem; onChanged: () =
           <code>{item.kycId}</code>
         </dd>
         <dt>Documents</dt>
-        <dd>{item.documentTypes.length ? item.documentTypes.map(humanize).join(', ') : '—'}</dd>
+        <dd>
+          {documents === null ? (
+            '…'
+          ) : documents.length === 0 ? (
+            '—'
+          ) : (
+            <span className="shortcuts">
+              {documents.map((document) => (
+                <button
+                  key={document.id}
+                  type="button"
+                  className="chip-btn"
+                  onClick={() => openFile(`/api/v1/kyc/documents/${document.id}/content`).catch((e) => setError(errorMessage(e)))}
+                >
+                  View {humanize(document.documentType).toLowerCase()}
+                  {document.documentNumber ? ` · ${document.documentNumber}` : ''}
+                </button>
+              ))}
+            </span>
+          )}
+        </dd>
         <dt>BVN</dt>
         <dd>{item.bvnPassed ? 'Passed with the provider' : 'No passed check'}</dd>
         <dt>NIN</dt>

@@ -32,10 +32,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/**
- * Email verification end to end: the link sent at registration, activation,
- * one-time and expiring links, resend limits, and email changes.
- */
 @Testcontainers
 @SpringBootTest(properties = "paycore.email-verification.public-url=https://app.paycore.test/")
 @AutoConfigureMockMvc
@@ -94,7 +90,6 @@ class EmailVerificationIntegrationTest {
         assertThat(email.subject()).isEqualTo("Verify your PayCore email address");
         assertThat(email.body()).contains("Hi Ada").contains("expires in 24 hours");
 
-        // Signing in works before verification; the customer is pending.
         String token = login("ada@example.com");
         me(token)
                 .andExpect(jsonPath("$.status").value("PENDING_VERIFICATION"))
@@ -108,7 +103,6 @@ class EmailVerificationIntegrationTest {
 
         me(token).andExpect(jsonPath("$.status").value("ACTIVE"));
 
-        // Only the hash is stored, never the token itself.
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT token_hash FROM email_verification_tokens", String.class
         )).hasSize(64).isNotEqualTo(tokenIn(email));
@@ -156,7 +150,6 @@ class EmailVerificationIntegrationTest {
         String first = tokenIn(onlyEmailTo("ada@example.com"));
         String token = login("ada@example.com");
 
-        // The registration link was just sent: wait a minute.
         resend(token)
                 .andExpect(status().isTooManyRequests())
                 .andExpect(jsonPath("$.error").value("VERIFICATION_EMAIL_RATE_LIMIT"))
@@ -169,7 +162,6 @@ class EmailVerificationIntegrationTest {
         assertThat(sent).hasSize(2);
         String second = tokenIn(sent.get(1));
 
-        // Only the newest link works.
         verify(first).andExpect(status().isBadRequest());
         verify(second).andExpect(status().isOk());
 
@@ -215,10 +207,8 @@ class EmailVerificationIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.emailVerified").value(true));
 
-        // The password login follows the new address...
         login("ada.new@example.com");
 
-        // ...and the old one is free for someone else to register.
         register("ada@example.com", "08012340002");
     }
 
@@ -235,7 +225,6 @@ class EmailVerificationIntegrationTest {
                         .content("{\"email\": \"ada.new@example.com\"}"))
                 .andExpect(status().isOk());
 
-        // Even if it had not been replaced by the new link.
         jdbcTemplate.update("UPDATE email_verification_tokens SET used_at = NULL");
 
         verify(oldLink).andExpect(status().isBadRequest());
@@ -258,9 +247,6 @@ class EmailVerificationIntegrationTest {
                 .andExpect(jsonPath("$.error").value("GOOGLE_SIGN_IN_DISABLED"));
     }
 
-    // ------------------------------------------------------------------
-
-    /** Moves every link back past the resend cooldown. */
     private void ageTokens() {
         jdbcTemplate.update(
                 "UPDATE email_verification_tokens "

@@ -62,8 +62,10 @@ class RoleRepositoryIntegrationTest {
                 .contains(
                         RoleName.CUSTOMER,
                         RoleName.SUPPORT,
-                        RoleName.ADMIN,
-                        RoleName.OPERATIONS
+                        RoleName.COMPLIANCE,
+                        RoleName.OPERATIONS_OFFICER,
+                        RoleName.OPERATIONS_SUPERVISOR,
+                        RoleName.ADMIN
                 );
     }
 
@@ -100,54 +102,69 @@ class RoleRepositoryIntegrationTest {
                 .containsExactlyInAnyOrder(
                         "CUSTOMER_READ",
                         "CUSTOMER_UPDATE",
-                        "ACCOUNT_VIEW_ALL"
+                        "ACCOUNT_VIEW_ALL",
+                        "PROFILE_READ"
                 );
     }
 
     @Test
-    void shouldSeedAdminRolePermissions() {
+    void shouldSeedComplianceRolePermissions() {
+
+        assertThat(permissionsOf(RoleName.COMPLIANCE))
+                .containsExactlyInAnyOrder(
+                        "CUSTOMER_READ",
+                        "ACCOUNT_VIEW_ALL",
+                        "KYC_REVIEW",
+                        "ACCOUNT_MANAGE",
+                        "CUSTOMER_SUSPEND",
+                        "CUSTOMER_CLOSE",
+                        "PROFILE_READ"
+                );
+    }
+
+    @Test
+    void adminShouldOnlyManageRoles() {
 
         assertThat(permissionsOf(RoleName.ADMIN))
                 .containsExactlyInAnyOrder(
                         "CUSTOMER_READ",
-                        "CUSTOMER_UPDATE",
-                        "CUSTOMER_SUSPEND",
-                        "CUSTOMER_CLOSE",
-                        "KYC_REVIEW",
                         "ROLE_MANAGE",
-                        "ACCOUNT_VIEW_ALL",
-                        "ACCOUNT_MANAGE"
+                        "PROFILE_READ"
                 );
     }
 
-    /**
-     * Operations officers request and approve money corrections; nobody
-     * else touches money, and they cannot manage customers or roles.
-     */
     @Test
-    void shouldSeedOperationsRolePermissions() {
+    void makerAndCheckerShouldBeSeparateRoles() {
 
-        assertThat(permissionsOf(RoleName.OPERATIONS))
+        assertThat(permissionsOf(RoleName.OPERATIONS_OFFICER))
                 .containsExactlyInAnyOrder(
                         "CUSTOMER_READ",
                         "ACCOUNT_VIEW_ALL",
                         "LEDGER_REQUEST",
-                        "LEDGER_APPROVE"
+                        "PROFILE_READ"
                 );
 
-        for (String role : List.of(RoleName.CUSTOMER, RoleName.SUPPORT, RoleName.ADMIN)) {
+        assertThat(permissionsOf(RoleName.OPERATIONS_SUPERVISOR))
+                .containsExactlyInAnyOrder(
+                        "CUSTOMER_READ",
+                        "ACCOUNT_VIEW_ALL",
+                        "LEDGER_APPROVE",
+                        "PROFILE_READ"
+                );
+
+        for (String role : List.of(RoleName.CUSTOMER, RoleName.SUPPORT, RoleName.COMPLIANCE, RoleName.ADMIN)) {
             assertThat(permissionsOf(role)).doesNotContain("LEDGER_REQUEST", "LEDGER_APPROVE");
         }
     }
 
     @Test
-    void onlyAdminShouldReviewKyc() {
+    void onlyComplianceShouldReviewKycOrManageAccounts() {
 
-        assertThat(permissionsOf(RoleName.CUSTOMER))
-                .doesNotContain("KYC_REVIEW");
-
-        assertThat(permissionsOf(RoleName.SUPPORT))
-                .doesNotContain("KYC_REVIEW");
+        for (String role : List.of(
+                RoleName.CUSTOMER, RoleName.SUPPORT, RoleName.OPERATIONS_OFFICER,
+                RoleName.OPERATIONS_SUPERVISOR, RoleName.ADMIN)) {
+            assertThat(permissionsOf(role)).doesNotContain("KYC_REVIEW", "ACCOUNT_MANAGE", "CUSTOMER_SUSPEND");
+        }
     }
 
     @Test

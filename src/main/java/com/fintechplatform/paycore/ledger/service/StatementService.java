@@ -28,21 +28,6 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
-/**
- * Account statements, derived from the ledger like every balance.
- *
- * A statement covers whole calendar days in PayCore's statement time zone
- * (Africa/Lagos by default), so a transfer at 23:30 UTC on 30 September
- * appears on 1 October, as the customer experienced it.
- *
- * Every figure comes from the database: the opening balance is everything
- * before the period, and each page's running balance starts from the
- * opening balance plus the period's earlier entries, so any page can be
- * read on its own.
- *
- * Statements are for customer accounts; system accounts are reconciled
- * through their balances instead.
- */
 @Service
 public class StatementService {
 
@@ -62,9 +47,6 @@ public class StatementService {
         this.timeZone = timeZone;
     }
 
-    /**
-     * 404 unless the account is the customer's own.
-     */
     @Transactional(readOnly = true)
     public StatementResponse getStatement(
             UUID customerId,
@@ -83,9 +65,6 @@ public class StatementService {
         return statement(account, from, to, page, size);
     }
 
-    /**
-     * Staff view of any customer account's statement.
-     */
     @Transactional(readOnly = true)
     public StatementResponse getCustomerAccountStatement(
             UUID accountId,
@@ -104,10 +83,6 @@ public class StatementService {
         return statement(account, from, to, page, size);
     }
 
-    /**
-     * Without dates, the month to date. With only a start date, from then
-     * to today.
-     */
     private StatementResponse statement(
             Account account,
             LocalDate requestedFrom,
@@ -129,7 +104,6 @@ public class StatementService {
             );
         }
 
-        // [start, end): from's first instant up to the day after to.
         Instant start = from.atStartOfDay(timeZone).toInstant();
         Instant end = to.plusDays(1).atStartOfDay(timeZone).toInstant();
 
@@ -142,7 +116,6 @@ public class StatementService {
         List<LedgerEntry> entries =
                 entryRepository.findStatementLines(accountId, start, end, PageRequest.of(page, size));
 
-        // Running balance at the start of this page.
         long running =
                 entries.isEmpty() || page == 0
                         ? opening
@@ -153,7 +126,6 @@ public class StatementService {
                                 entries.getFirst().getId()
                         );
 
-        // The other side of every line on the page, in one query.
         Map<UUID, List<LedgerEntry>> siblings =
                 entries.isEmpty()
                         ? Map.of()
@@ -205,12 +177,6 @@ public class StatementService {
         );
     }
 
-    /**
-     * Who is on the other side of the line, as a banking app names them:
-     * the other bank's account for a transfer in or out, the other
-     * customer for a transfer inside PayCore, nobody for money PayCore
-     * itself moved (top-ups, adjustments).
-     */
     private static Counterparty counterparty(LedgerEntry entry, List<LedgerEntry> transactionEntries) {
 
         Counterparty external = entry.getTransaction().getCounterparty();

@@ -8,11 +8,6 @@ import jakarta.persistence.*;
 import java.time.Instant;
 import java.util.UUID;
 
-/**
- * Immutable record of one provider verification attempt. Attempts are
- * appended, never overwritten, and never store the raw identifier
- * (BVN/NIN) that was checked.
- */
 @Entity
 @Table(name = "kyc_verifications")
 public class KycVerification {
@@ -52,10 +47,6 @@ public class KycVerification {
     @Column(length = 1000)
     private String reason;
 
-    /**
-     * Normalized client network the attempt came from (see
-     * {@link com.fintechplatform.paycore.common.net.ClientNetwork}).
-     */
     @Column(name = "ip_address", length = 50)
     private String ipAddress;
 
@@ -104,9 +95,6 @@ public class KycVerification {
         );
     }
 
-    /**
-     * An attempt with no known client network.
-     */
     public static KycVerification create(
             KycProfile kycProfile,
             KycVerificationType verificationType,

@@ -7,11 +7,6 @@ import { StatementView } from '../../components/StatementView';
 import { Field, formatMoney, Notice } from '../../components/ui';
 import { markDone } from '../../journey';
 
-/**
- * Staff view of one customer account's money: its balance and statement.
- * Staff cannot deposit or withdraw. An operations officer can request an
- * adjustment, posted only once a second officer approves it.
- */
 export function AccountMoney({ account }: { account: Account }) {
   const { can } = useAuth();
   const [balance, setBalance] = useState<Balance | null>(null);

@@ -1,9 +1,5 @@
 package com.fintechplatform.paycore.identity.exception;
 
-/**
- * The login session can no longer issue tokens: it was idle too long or
- * reached its absolute lifetime. The client must sign in again.
- */
 public class SessionTimedOutException extends RuntimeException {
 
     public enum Reason {

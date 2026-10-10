@@ -4,6 +4,7 @@ import com.fintechplatform.paycore.kyc.dto.KycReviewRequest;
 import com.fintechplatform.paycore.kyc.dto.BvnAttemptsResetResponse;
 import com.fintechplatform.paycore.kyc.dto.BvnAttemptsResponse;
 import com.fintechplatform.paycore.kyc.dto.KycDocumentResponse;
+import com.fintechplatform.paycore.kyc.dto.KycDocumentSummary;
 import com.fintechplatform.paycore.kyc.dto.KycResponse;
 import com.fintechplatform.paycore.kyc.dto.KycReviewQueueResponse;
 import com.fintechplatform.paycore.kyc.dto.KycStatusResponse;
@@ -29,14 +30,9 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.UUID;
 
-/**
- * Customer endpoints act on the caller's own KYC (resolved from the
- * access token), so one customer can never touch another's profile.
- * They need KYC_READ or KYC_SUBMIT. Review endpoints need KYC_REVIEW
- * and refuse self-review.
- */
 @RestController
 @RequestMapping("/api/v1/kyc")
 public class KycController {
@@ -92,10 +88,6 @@ public class KycController {
         return kycService.startKyc(currentUser.customerId());
     }
 
-    /**
-     * Multipart upload of a PDF, PNG or JPEG (max 5 MB). Only metadata
-     * and the storage key are kept in the database.
-     */
     @PostMapping(
             value = "/documents",
             consumes = MediaType.MULTIPART_FORM_DATA_VALUE
@@ -127,13 +119,6 @@ public class KycController {
         return kycService.submitKyc(currentUser.customerId());
     }
 
-    /**
-     * The client IP comes from the servlet request's remote address, never
-     * from a raw X-Forwarded-For header (which clients can forge). Behind
-     * a reverse proxy, the prod profile (application-prod.properties) makes
-     * Tomcat set the remote address from X-Forwarded-For, but only for
-     * requests arriving from trusted proxies.
-     */
     @PostMapping("/bvn")
     @PreAuthorize("hasAuthority('KYC_SUBMIT')")
     public KycVerificationResponse verifyBvn(
@@ -149,11 +134,6 @@ public class KycController {
         );
     }
 
-    /**
-     * National Identification Number check; an alternative to the BVN.
-     * Same client-IP handling and limits as {@link #verifyBvn}, counted
-     * separately per check type.
-     */
     @PostMapping("/nin")
     @PreAuthorize("hasAuthority('KYC_SUBMIT')")
     public KycVerificationResponse verifyNin(
@@ -169,10 +149,6 @@ public class KycController {
         );
     }
 
-    /**
-     * Review queue, most recently changed first. Omit {@code status} to
-     * list profiles in every state.
-     */
     @GetMapping("/reviews")
     @PreAuthorize("hasAuthority('KYC_REVIEW')")
     public KycReviewQueueResponse listProfiles(
@@ -226,14 +202,26 @@ public class KycController {
         );
     }
 
-    /**
-     * Admin view of the customer's BVN retry limit and attempt history.
-     * Read-only, so unlike the review actions it is also allowed on the
-     * admin's own profile.
-     *
-     * <p>History is paginated ({@code page} is zero-based, newest first);
-     * the limit summary describes the current state on every page.
-     */
+    @GetMapping("/{kycId}/documents")
+    @PreAuthorize("hasAuthority('KYC_REVIEW')")
+    public List<KycDocumentSummary> getDocuments(@PathVariable UUID kycId) {
+        return kycDocumentService.documentsOf(kycId);
+    }
+
+    @GetMapping("/documents/{documentId}/content")
+    @PreAuthorize("hasAuthority('KYC_REVIEW')")
+    public ResponseEntity<byte[]> getDocumentContent(@PathVariable UUID documentId) {
+
+        KycDocumentService.DocumentContent document = kycDocumentService.content(documentId);
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(document.mediaType()))
+                .header("Content-Disposition", "inline")
+                .header("Cache-Control", "no-store")
+                .header("X-Content-Type-Options", "nosniff")
+                .body(document.bytes());
+    }
+
     @GetMapping("/{kycId}/bvn-attempts")
     @PreAuthorize("hasAuthority('KYC_REVIEW')")
     public BvnAttemptsResponse getBvnAttempts(
@@ -252,9 +240,6 @@ public class KycController {
         return kycService.getBvnAttempts(kycId, page, size);
     }
 
-    /**
-     * Same view as {@link #getBvnAttempts} for NIN checks.
-     */
     @GetMapping("/{kycId}/nin-attempts")
     @PreAuthorize("hasAuthority('KYC_REVIEW')")
     public BvnAttemptsResponse getNinAttempts(
@@ -273,10 +258,6 @@ public class KycController {
         return kycService.getAttempts(kycId, KycVerificationType.NIN, page, size);
     }
 
-    /**
-     * Gives the customer a fresh set of BVN (and NIN) attempts. Failed attempts are
-     * kept as history; only the retry-limit count starts over.
-     */
     @PostMapping("/{kycId}/bvn-attempts/reset")
     @PreAuthorize("hasAuthority('KYC_REVIEW')")
     public BvnAttemptsResetResponse resetBvnAttempts(

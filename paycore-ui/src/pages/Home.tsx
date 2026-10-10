@@ -8,19 +8,27 @@ const BUILT = [
   ['JWT access + refresh tokens', 'Short-lived access tokens, rotating refresh tokens with reuse detection'],
   ['Spring Security', 'Stateless resource server that resolves the current user from the token'],
   ['RBAC', 'Roles → permissions, enforced with @PreAuthorize, with an audited role history'],
+  ['Separation of duties', 'Five staff desks (Support, Compliance, Ops Officer, Ops Supervisor, System Admin); conflicting roles cannot be combined'],
   ['KYC', 'Status workflow, BVN and NIN checks behind a provider interface, document upload, compliance review'],
   ['Abuse limits', 'BVN/NIN retry limits per customer and per network'],
   ['Accounts', 'NUBAN account numbers, activated only after KYC, audited freeze and close'],
   ['Double-entry ledger', 'Balances derived from immutable entries, idempotent transfers, row locks against double spending'],
   ['Money in', 'Inbound bank transfers by signed webhook (NIP-style session ids) and card top-ups, credited only when the rail or processor confirms'],
   ['Money out', 'Transfers to other banks with name enquiry; rejected payments reversed automatically'],
-  ['Maker-checker', 'Reversals and adjustments need two operations officers; nobody moves money alone'],
+  ['Payments', 'State machine per payment; unknown outcomes are queried with backoff, never assumed failed'],
+  ['Maker-checker', 'An Operations Officer requests every reversal or adjustment and a Supervisor approves it; nobody moves money alone'],
+  ['Reconciliation', "Daily provider settlement reports matched against PayCore's books in both directions"],
+  ['Transaction PIN', 'Required on every payment, locked after 3 wrong tries, reset by email code'],
+  ['Device binding', 'A new device is confirmed by email code, then capped at ₦20,000 for its first 24 hours'],
+  ['Limits by KYC tier', 'Daily send and maximum balance per tier; higher tiers through a reviewed document upgrade'],
+  ['Bill payments', 'Airtime, data, electricity and TV behind a bills provider (VTpass sandbox or simulated), reversed when the biller declines'],
   ['Account statements', 'Opening, closing and running balances per Lagos calendar day'],
+  ['Database privileges', 'The API runs as a role that cannot delete or rewrite ledger and payment rows'],
   ['PostgreSQL + Flyway', 'Versioned schema migrations and UUIDv7 keys'],
   ['Automated tests', 'Unit tests plus Testcontainers integration tests'],
 ];
 
-const NEXT = ['Real payment rail (NIBSS NIP via a provider)', 'Limits by KYC tier', 'Transaction PIN and device binding', 'Bill payments'];
+const NEXT = ['Real payment rail: Monnify sandbox for transfers in and out (NIBSS NIP)'];
 
 export function Home() {
   const { done } = useJourney();
@@ -35,10 +43,11 @@ export function Home() {
         <p className="lede">
           This is the payment infrastructure backend I'm building in Java and Spring Boot. This thin UI is here to let
           you try what already works instead of only reading about it: open an account, verify your identity, then
-          receive money from a simulated other bank and send it on, inside PayCore or out to another bank. Staff work in
-          a separate back office: the compliance admin activates accounts, and two operations officers must agree on any
-          correction. Every endpoint is also
-          documented at <code>/swagger-ui.html</code>.
+          receive money from a simulated other bank and send it on, inside PayCore or out to another bank, or pay a bill,
+          each confirmed with your transaction PIN. Then step into the back office and work each desk as a bank would:
+          Support answers customers, Compliance decides who may bank, an Operations Officer prepares corrections that
+          a Supervisor approves, and a System Admin hands out access. Ready-made scenarios give every desk real work.
+          Every endpoint is also documented at <code>/swagger-ui.html</code>.
         </p>
         <div className="hero-actions">
           <Link to="/register" className="btn btn-primary btn-lg">
@@ -95,12 +104,19 @@ export function Home() {
           <strong>BankRail</strong>
           <span>Simulated Test Bank · NIP-style webhooks</span>
         </div>
+        <div className="arch-arrow" aria-hidden>
+          ⇢
+        </div>
+        <div className="arch-node">
+          <strong>BillProvider</strong>
+          <span>Simulated · VTpass sandbox</span>
+        </div>
       </section>
 
       <div className="grid-2">
         <section className="card">
           <header className="card-head">
-            <h2>Phase A: built and running</h2>
+            <h2>Built and running</h2>
           </header>
           <ul className="checklist">
             {BUILT.map(([title, detail]) => (
@@ -120,14 +136,13 @@ export function Home() {
         <div className="stack">
           <section className="card">
             <header className="card-head">
-              <h2>Currently building</h2>
+              <h2>Next</h2>
             </header>
             <ol className="roadmap">
               {NEXT.map((item, i) => (
                 <li key={item}>
                   <span className="roadmap-step">{i + 1}</span>
                   {item}
-                  {i === 0 && <span className="badge badge-info">Next</span>}
                 </li>
               ))}
             </ol>

@@ -1,10 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { PHASES, useJourney } from '../journey';
 
-/**
- * The guided walkthrough: customer phase, then admin phase, then back to
- * the customer to see the decision. Completed steps are ticked.
- */
 export function JourneyBar() {
   const { done } = useJourney();
   const { pathname } = useLocation();

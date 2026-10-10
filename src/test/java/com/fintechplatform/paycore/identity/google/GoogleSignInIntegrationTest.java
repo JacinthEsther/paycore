@@ -33,12 +33,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/**
- * Sign in and sign up with Google, with Google's token check stubbed
- * (JwtGoogleIdTokenVerifierTest covers the real one): new customers,
- * returning customers, linking by email, and the pre-account takeover
- * defence.
- */
 @Testcontainers
 @SpringBootTest(properties = "paycore.google.client-id=paycore-test.apps.googleusercontent.com")
 @AutoConfigureMockMvc
@@ -124,7 +118,6 @@ class GoogleSignInIntegrationTest {
                 .andExpect(jsonPath("$.emailVerified").value(true))
                 .andExpect(jsonPath("$.phoneNumber").doesNotExist());
 
-        // A normal customer: CUSTOMER role, a KYC profile, no password.
         mockMvc.perform(get("/api/v1/kyc/status").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("NOT_STARTED"));
@@ -133,7 +126,6 @@ class GoogleSignInIntegrationTest {
                 "SELECT provider FROM identities", String.class
         )).containsExactly("GOOGLE");
 
-        // Google already verified the address: no link is sent.
         assertThat(events.stream(EmailSentEvent.class)).isEmpty();
     }
 
@@ -159,7 +151,6 @@ class GoogleSignInIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.customerId").value(customerId));
 
-        // Both ways in now work.
         login("ada.obi@gmail.com").andExpect(status().isOk());
 
         assertThat(jdbcTemplate.queryForList(
@@ -170,20 +161,16 @@ class GoogleSignInIntegrationTest {
     @Test
     void anUnverifiedAccountWithTheSameEmailShouldNotKeepItsPassword() throws Exception {
 
-        // Someone registered Ada's address with a password but never
-        // proved they own it...
         String customerId = register("ada.obi@gmail.com");
         String squatterToken = JsonPath.read(
                 login("ada.obi@gmail.com").andReturn().getResponse().getContentAsString(), "$.accessToken"
         );
 
-        // ...then the real Ada signs in with Google.
         google("ada-token")
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.customerId").value(customerId))
                 .andExpect(jsonPath("$.status").value("ACTIVE"));
 
-        // The password no longer works, and the earlier session is over.
         login("ada.obi@gmail.com")
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error").value("IDENTITY_DISABLED"));
@@ -251,8 +238,6 @@ class GoogleSignInIntegrationTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.missing", not(hasItem("phone number on your profile"))));
     }
-
-    // ------------------------------------------------------------------
 
     private ResultActions google(String credential) throws Exception {
         return mockMvc.perform(post("/api/v1/auth/google")

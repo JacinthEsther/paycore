@@ -1,12 +1,14 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { api, errorMessage } from '../../api/client';
+import { api, ApiError, errorMessage } from '../../api/client';
 import { useDemoInfo } from '../../api/demo';
-import type { Account, Bank, NameEnquiry, OutboundTransfer, TestBankAccount, Transaction } from '../../api/types';
+import type { Account, Bank, NameEnquiry, OutboundTransfer, Payment, TestBankAccount, Transaction } from '../../api/types';
 import { refreshBanking, useBanking } from '../../banking';
 import { ScreenTitle } from '../../components/Layout';
+import { PinInput } from '../../components/PinInput';
 import { Avatar, Field, formatAccountNumber, formatMoney, Icon, newIdempotencyKey, Notice } from '../../components/ui';
 import { markDone } from '../../journey';
+import { useTransactionSecurity } from '../../security';
 
 const PAYCORE = '100999';
 
@@ -27,6 +29,7 @@ export function Transfer() {
   const { account, balance, loading } = useBanking();
   const [draft, setDraft] = useState<Draft | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
+  const [pin, setPin] = useState('');
 
   if (loading) return <p className="muted">Loading…</p>;
 
@@ -47,16 +50,28 @@ export function Transfer() {
         draft={draft}
         outcome={outcome}
         account={account}
+        pin={pin}
         onAnother={() => {
           setDraft(null);
           setOutcome(null);
+          setPin('');
         }}
       />
     );
   }
 
   if (draft) {
-    return <Review draft={draft} account={account} onBack={() => setDraft(null)} onSent={setOutcome} />;
+    return (
+      <Review
+        draft={draft}
+        account={account}
+        onBack={() => setDraft(null)}
+        onSent={(sent, usedPin) => {
+          setPin(usedPin);
+          setOutcome(sent);
+        }}
+      />
+    );
   }
 
   return <Details account={account} available={balance.balance} onContinue={setDraft} />;
@@ -89,7 +104,6 @@ function Details({
       .catch(() => setOwnTestBank(null));
   }, [account.id]);
 
-  // Name enquiry as soon as the number is complete, like every banking app.
   useEffect(() => {
     setEnquiry(null);
     setEnquiryError(null);
@@ -218,8 +232,11 @@ function Details({
 
         {bankCode !== PAYCORE && (
           <p className="muted small">
-            Test Bank is simulated. A transfer of any amount ending in <code>.99</code> is rejected by the beneficiary
-            bank, so you can watch PayCore reverse it and return your money automatically.
+            Test Bank is simulated, and the kobo pick what happens: <code>.99</code> is rejected and reversed at once;{' '}
+            <code>.98</code> is paid but the answer is lost, so it shows as processing until PayCore's status check
+            confirms it; <code>.97</code> never reaches the bank, so the check reverses it; <code>.96</code> can never be
+            confirmed, so operations resolve it under maker-checker; <code>.93</code> is accepted but returned by the bank
+            later, which only reconciliation finds.
           </p>
         )}
 
@@ -240,11 +257,14 @@ function Review({
   draft: Draft;
   account: Account;
   onBack: () => void;
-  onSent: (outcome: Outcome) => void;
+  onSent: (outcome: Outcome, pin: string) => void;
 }) {
+  const security = useTransactionSecurity();
+  const [pin, setPin] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const internal = draft.bank.code === PAYCORE;
+  const headers = { 'X-Transaction-PIN': pin };
 
   async function send() {
     setBusy(true);
@@ -259,9 +279,10 @@ function Review({
             idempotencyKey: draft.key,
             description: draft.narration || null,
           },
+          headers,
         });
         markDone('transfer');
-        onSent({ kind: 'internal', transaction });
+        onSent({ kind: 'internal', transaction }, pin);
       } else {
         const transfer = await api<OutboundTransfer>(`/api/v1/ledger/accounts/${account.id}/bank-transfers`, {
           body: {
@@ -272,13 +293,18 @@ function Review({
             narration: draft.narration || null,
             idempotencyKey: draft.key,
           },
+          headers,
         });
         markDone('transfer-out');
-        onSent({ kind: 'external', transfer });
+        onSent({ kind: 'external', transfer }, pin);
       }
       refreshBanking();
     } catch (e) {
       setError(errorMessage(e));
+      if (e instanceof ApiError && ['INVALID_PIN', 'PIN_LOCKED'].includes(e.body.error ?? '')) {
+        setPin('');
+        void security.reload();
+      }
     } finally {
       setBusy(false);
     }
@@ -308,12 +334,23 @@ function Review({
           <dt>Fee</dt>
           <dd>₦0.00</dd>
         </dl>
+        {!security.loading && !security.ready && (
+          <Notice tone="warn">
+            {security.device?.status !== 'TRUSTED'
+              ? 'Confirm this device first.'
+              : security.pin?.locked
+                ? 'Your PIN is locked.'
+                : 'Set a transaction PIN first.'}{' '}
+            <Link to="/app/devices">PIN & devices ›</Link>
+          </Notice>
+        )}
+        {security.ready && <PinInput value={pin} onChange={setPin} autoFocus />}
         {error && <Notice tone="bad">{error}</Notice>}
         <div className="actions">
           <button className="btn btn-ghost" onClick={onBack} disabled={busy}>
             Edit
           </button>
-          <button className="btn btn-primary" onClick={send} disabled={busy}>
+          <button className="btn btn-primary" onClick={send} disabled={busy || !security.ready || pin.length !== 4}>
             {busy ? 'Sending…' : 'Send money'}
           </button>
         </div>
@@ -326,19 +363,31 @@ function Receipt({
   draft,
   outcome,
   account,
+  pin,
   onAnother,
 }: {
   draft: Draft;
   outcome: Outcome;
   account: Account;
+  pin: string;
   onAnother: () => void;
 }) {
   const transaction = outcome.kind === 'internal' ? outcome.transaction : outcome.transfer;
   const failed = outcome.kind === 'external' && outcome.transfer.transferStatus === 'FAILED';
   const pending = outcome.kind === 'external' && outcome.transfer.transferStatus === 'PENDING';
   const [retryNote, setRetryNote] = useState<string | null>(null);
+  const [checked, setChecked] = useState<Payment | null>(null);
 
-  /** The identical request again, same idempotency key. */
+  async function checkStatus() {
+    if (outcome.kind !== 'external') return;
+    try {
+      setChecked(await api<Payment>(`/api/v1/payments/${outcome.transfer.paymentId}`));
+      refreshBanking();
+    } catch (e) {
+      setRetryNote(errorMessage(e));
+    }
+  }
+
   async function resend() {
     try {
       const again =
@@ -351,6 +400,7 @@ function Receipt({
                 idempotencyKey: draft.key,
                 description: draft.narration || null,
               },
+              headers: { 'X-Transaction-PIN': pin },
             })
           : await api<OutboundTransfer>(`/api/v1/ledger/accounts/${account.id}/bank-transfers`, {
               body: {
@@ -361,6 +411,7 @@ function Receipt({
                 narration: draft.narration || null,
                 idempotencyKey: draft.key,
               },
+              headers: { 'X-Transaction-PIN': pin },
             });
       setRetryNote(
         again.id === transaction.id
@@ -387,6 +438,23 @@ function Receipt({
       </p>
       {failed && outcome.kind === 'external' && outcome.transfer.failureReason && (
         <Notice tone="warn">{outcome.transfer.failureReason}</Notice>
+      )}
+      {pending && (
+        <Notice tone="warn" title="Waiting for the bank's answer">
+          The bank did not answer in time. Your money stays reserved, never lost: PayCore asks the bank what happened
+          and either completes the transfer or returns your money.{' '}
+          {checked
+            ? checked.status === 'SUCCEEDED'
+              ? 'Update: the bank confirmed it. The transfer is complete.'
+              : checked.status === 'FAILED'
+                ? `Update: ${checked.failureReason ?? 'it failed'}`
+                : `Still ${checked.status.toLowerCase().replace('_', ' ')} after ${checked.statusChecks} check(s).`
+            : null}
+          <br />
+          <button className="btn btn-ghost btn-sm" onClick={checkStatus}>
+            Check status
+          </button>
+        </Notice>
       )}
 
       <dl className="review-list">

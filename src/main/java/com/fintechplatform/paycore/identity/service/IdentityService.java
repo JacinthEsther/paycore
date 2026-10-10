@@ -18,11 +18,6 @@ public class IdentityService {
         this.identityRepository = identityRepository;
     }
 
-
-    /**
-     * One password identity per customer is enforced by the unique index
-     * uk_identity_customer_provider (V3), not by a query before the insert.
-     */
     @Transactional
     public Identity createPasswordIdentity(
             Customer customer,
@@ -38,17 +33,11 @@ public class IdentityService {
         return identityRepository.save(identity);
     }
 
-
-
     @Transactional(readOnly = true)
     public Identity findPasswordIdentity(Customer customer) {
         return identityRepository.findByCustomerAndProvider(customer, IdentityProvider.PASSWORD).orElseThrow(PasswordIdentityNotFoundException::new);
     }
 
-    /**
-     * Keeps a password identity's subject equal to the customer's email.
-     * A customer without one (Google only) has nothing to update.
-     */
     @Transactional
     public void changePasswordIdentitySubject(Customer customer, String email) {
         identityRepository

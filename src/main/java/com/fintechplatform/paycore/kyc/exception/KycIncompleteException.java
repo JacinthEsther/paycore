@@ -2,10 +2,6 @@ package com.fintechplatform.paycore.kyc.exception;
 
 import java.util.List;
 
-/**
- * The KYC package is missing something it needs before it can be
- * submitted for review. {@code missing} names each requirement.
- */
 public class KycIncompleteException extends RuntimeException {
 
     private final List<String> missing;

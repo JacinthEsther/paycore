@@ -3,6 +3,7 @@ package com.fintechplatform.paycore.operations.controller;
 import com.fintechplatform.paycore.operations.dto.AdjustmentRequestBody;
 import com.fintechplatform.paycore.operations.dto.DecisionBody;
 import com.fintechplatform.paycore.operations.dto.OperationsRequestResponse;
+import com.fintechplatform.paycore.operations.dto.PaymentResolutionRequestBody;
 import com.fintechplatform.paycore.operations.dto.ReversalRequestBody;
 import com.fintechplatform.paycore.operations.service.OperationsService;
 import com.fintechplatform.paycore.security.CurrentUser;
@@ -16,11 +17,6 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.UUID;
 
-/**
- * The operations desk: makers file corrections, checkers decide them.
- * Filing needs LEDGER_REQUEST, deciding LEDGER_APPROVE, and the same
- * officer can never decide their own request (403 FOUR_EYES_REQUIRED).
- */
 @RestController
 @RequestMapping("/api/v1/ops/requests")
 public class OperationsController {
@@ -53,7 +49,17 @@ public class OperationsController {
                 .body(operationsService.requestReversal(officer.customerId(), body));
     }
 
-    /** status=PENDING (default) for the queue, DECIDED for recent decisions. */
+    @PostMapping("/payment-resolutions")
+    @PreAuthorize("hasAuthority('LEDGER_REQUEST')")
+    public ResponseEntity<OperationsRequestResponse> requestPaymentResolution(
+            @AuthenticationPrincipal CurrentUser officer,
+            @Valid @RequestBody PaymentResolutionRequestBody body
+    ) {
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(operationsService.requestPaymentResolution(officer.customerId(), body));
+    }
+
     @GetMapping
     @PreAuthorize("hasAnyAuthority('LEDGER_REQUEST', 'LEDGER_APPROVE')")
     public List<OperationsRequestResponse> list(@RequestParam(defaultValue = "PENDING") String status) {

@@ -7,10 +7,6 @@ public enum CustomerStatus {
     SUSPENDED,
     CLOSED;
 
-    /**
-     * Whether a customer in this status may sign in, refresh tokens or use
-     * an access token they already hold.
-     */
     public boolean canAuthenticate() {
         return this != SUSPENDED && this != CLOSED;
     }

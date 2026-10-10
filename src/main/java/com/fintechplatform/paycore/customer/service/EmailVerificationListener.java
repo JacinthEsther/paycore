@@ -9,11 +9,6 @@ import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.util.UUID;
 
-/**
- * Sends a verification link once a registration or email change has
- * committed. A failure here is logged, never thrown: the registration has
- * already succeeded, and the customer can ask for another link.
- */
 @Component
 public class EmailVerificationListener {
 

@@ -8,11 +8,6 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 
-/**
- * A one-time link proving a customer owns an email address. Only the
- * SHA-256 hash of the token is stored; the raw token exists only in the
- * email that was sent.
- */
 @Entity
 @Table(name = "email_verification_tokens")
 public class EmailVerificationToken {
@@ -61,14 +56,10 @@ public class EmailVerificationToken {
         return token;
     }
 
-    /**
-     * Usable: not used or replaced, and not expired.
-     */
     public boolean isUsable(Instant now) {
         return usedAt == null && now.isBefore(expiresAt);
     }
 
-    /** Used, or replaced by a newer link. Either way it no longer works. */
     public void markUsed() {
         if (usedAt == null) {
             usedAt = Instant.now();

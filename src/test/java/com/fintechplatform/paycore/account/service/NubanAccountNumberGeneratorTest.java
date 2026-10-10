@@ -16,12 +16,9 @@ class NubanAccountNumberGeneratorTest {
     @Test
     void shouldComputeNubanCheckDigit() {
 
-        // Worked by hand with weights 3,7,3,3,7,3,3,7,3,3,7,3:
-        // 0,5,8 | 1..9 -> 0+35+24+3+14+9+12+35+18+21+56+27 = 254 -> 10 - 4 = 6
         assertThat(NubanAccountNumberGenerator.checkDigit("058", "123456789"))
                 .isEqualTo(6);
 
-        // 9,9,9 | 0..0,1 -> 27+63+27+3 = 120 -> (10 - 0) % 10 = 0
         assertThat(NubanAccountNumberGenerator.checkDigit("999", "000000001"))
                 .isZero();
     }
@@ -51,8 +48,6 @@ class NubanAccountNumberGeneratorTest {
             seen.add(generator.generate());
         }
 
-        // 10^9 serials: a handful of collisions in 10k draws would already
-        // mean the randomness is broken.
         assertThat(seen).hasSizeGreaterThan(9_990);
     }
 

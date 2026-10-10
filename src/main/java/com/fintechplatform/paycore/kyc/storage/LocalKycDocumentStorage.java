@@ -9,11 +9,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
 
-/**
- * Development storage on the local file system. File names are always
- * generated here; the client's original file name is never used, so it
- * cannot influence the path.
- */
 @Component
 public class LocalKycDocumentStorage implements KycDocumentStorage {
 
@@ -45,6 +40,19 @@ public class LocalKycDocumentStorage implements KycDocumentStorage {
         }
 
         return storageKey;
+    }
+
+    @Override
+    public byte[] read(String storageKey) {
+
+        try {
+            return Files.readAllBytes(resolve(storageKey));
+        } catch (IOException exception) {
+            throw new UncheckedIOException(
+                    "Unable to read KYC document",
+                    exception
+            );
+        }
     }
 
     @Override

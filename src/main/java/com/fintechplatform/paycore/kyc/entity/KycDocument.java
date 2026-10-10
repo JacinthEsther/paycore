@@ -7,10 +7,6 @@ import jakarta.persistence.*;
 import java.time.Instant;
 import java.util.UUID;
 
-/**
- * Metadata for an uploaded document. The file itself lives in object
- * storage; only its storage key is kept here.
- */
 @Entity
 @Table(name = "kyc_documents")
 public class KycDocument {

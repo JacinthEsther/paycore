@@ -9,6 +9,7 @@ import com.fintechplatform.paycore.ledger.domain.Money;
 import com.fintechplatform.paycore.ledger.dto.response.StaffTransactionResponse;
 import com.fintechplatform.paycore.ledger.service.LedgerService;
 import com.fintechplatform.paycore.operations.dto.AdjustmentRequestBody;
+import com.fintechplatform.paycore.operations.dto.PaymentResolutionRequestBody;
 import com.fintechplatform.paycore.operations.dto.OperationsRequestResponse;
 import com.fintechplatform.paycore.operations.dto.ReversalRequestBody;
 import com.fintechplatform.paycore.operations.entity.OperationsRequest;
@@ -17,6 +18,8 @@ import com.fintechplatform.paycore.operations.enums.OperationsRequestType;
 import com.fintechplatform.paycore.operations.exception.DuplicateReversalRequestException;
 import com.fintechplatform.paycore.operations.exception.OperationsRequestNotFoundException;
 import com.fintechplatform.paycore.operations.repository.OperationsRequestRepository;
+import com.fintechplatform.paycore.payment.entity.Payment;
+import com.fintechplatform.paycore.payment.service.PaymentService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -29,20 +32,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-/**
- * Maker-checker for every money correction staff can make. An operations
- * officer (maker) files a request with a reason; nothing moves. A
- * different officer (checker) approves it, which posts the ledger
- * transaction recording both of them, or rejects it with a note.
- *
- * The rules a bank would apply, enforced here and in the database:
- * <ul>
- *   <li>the checker is never the maker (four eyes)</li>
- *   <li>neither may hold an account the correction touches</li>
- *   <li>a request is decided once; approving twice posts once</li>
- *   <li>at most one reversal of a transaction waits at a time</li>
- * </ul>
- */
 @Service
 public class OperationsService {
 
@@ -56,29 +45,30 @@ public class OperationsService {
     private final LedgerService ledgerService;
     private final AccountRepository accountRepository;
     private final CustomerRepository customerRepository;
+    private final PaymentService paymentService;
+    private final PaymentResolutionService paymentResolutionService;
 
     public OperationsService(
             OperationsRequestRepository requestRepository,
             LedgerService ledgerService,
             AccountRepository accountRepository,
-            CustomerRepository customerRepository
+            CustomerRepository customerRepository,
+            PaymentService paymentService,
+            PaymentResolutionService paymentResolutionService
     ) {
         this.requestRepository = requestRepository;
         this.ledgerService = ledgerService;
         this.accountRepository = accountRepository;
         this.customerRepository = customerRepository;
+        this.paymentService = paymentService;
+        this.paymentResolutionService = paymentResolutionService;
     }
-
-    // ============================================================
-    // MAKER
-    // ============================================================
 
     @Transactional
     public OperationsRequestResponse requestAdjustment(UUID makerId, AdjustmentRequestBody body) {
 
         Money amount = Money.ofMajor(body.amount(), Currency.of(body.currency()));
 
-        // Fails now rather than at approval if it could never be posted.
         ledgerService.requireAdjustable(makerId, body.accountId(), amount.currency().code());
 
         OperationsRequest request =
@@ -129,15 +119,11 @@ public class OperationsService {
         return toResponse(request);
     }
 
-    // ============================================================
-    // CHECKER
-    // ============================================================
+    @Transactional
+    public OperationsRequestResponse requestPaymentResolution(UUID makerId, PaymentResolutionRequestBody body) {
+        return toResponse(paymentResolutionService.request(makerId, body));
+    }
 
-    /**
-     * Posts the correction and marks the request approved, in one database
-     * transaction: if the ledger refuses (the money is gone, the account
-     * closed), nothing is posted and the request stays pending.
-     */
     @Transactional
     public OperationsRequestResponse approve(UUID checkerId, UUID requestId, String note) {
 
@@ -147,6 +133,17 @@ public class OperationsService {
                         .orElseThrow(OperationsRequestNotFoundException::new);
 
         request.requireDecidableBy(checkerId);
+
+        if (request.getType() == OperationsRequestType.PAYMENT_RESOLUTION) {
+
+            UUID posted = paymentResolutionService.apply(request, checkerId).orElse(null);
+            request.approve(checkerId, note, posted);
+
+            log.info("Request {} approved by {}: payment {} resolved {}",
+                    requestId, checkerId, request.getPaymentId(), request.getResolution());
+
+            return toResponse(request);
+        }
 
         StaffTransactionResponse posted =
                 request.getType() == OperationsRequestType.ADJUSTMENT
@@ -191,11 +188,6 @@ public class OperationsService {
         return toResponse(request);
     }
 
-    // ============================================================
-    // READS
-    // ============================================================
-
-    /** Pending requests oldest first, or decided ones newest first. */
     @Transactional(readOnly = true)
     public List<OperationsRequestResponse> list(boolean pending) {
 
@@ -220,8 +212,12 @@ public class OperationsService {
 
     private OperationsRequestResponse toResponse(OperationsRequest request) {
 
+        Payment payment = request.getPaymentId() == null ? null : paymentService.get(request.getPaymentId());
+
+        UUID accountId = payment == null ? request.getAccountId() : payment.getAccountId();
+
         Optional<Account> account =
-                request.getAccountId() == null ? Optional.empty() : accountRepository.findById(request.getAccountId());
+                accountId == null ? Optional.empty() : accountRepository.findById(accountId);
 
         StaffTransactionResponse transaction =
                 request.getTransactionId() == null ? null : ledgerService.getAnyTransaction(request.getTransactionId());
@@ -237,6 +233,9 @@ public class OperationsService {
         if (request.getType() == OperationsRequestType.ADJUSTMENT) {
             currency = request.getCurrency();
             amount = BigDecimal.valueOf(request.getAmountMinor(), Currency.of(currency).minorUnit());
+        } else if (payment != null) {
+            currency = payment.getCurrency();
+            amount = payment.amount().toMajor();
         } else {
             currency = transaction.transaction().currency();
             amount = transaction.transaction().amount();
@@ -246,7 +245,7 @@ public class OperationsService {
                 request.getId(),
                 request.getType(),
                 request.getStatus(),
-                request.getAccountId(),
+                accountId,
                 account.map(Account::getAccountNumber).orElse(null),
                 account.map(found -> found.getCustomer().getFirstName() + " " + found.getCustomer().getLastName())
                         .orElse(null),
@@ -266,7 +265,11 @@ public class OperationsService {
                 request.getDecidedAt(),
                 request.getDecisionNote(),
                 request.getResultTransactionId(),
-                result == null ? null : result.transaction().reference()
+                result == null ? null : result.transaction().reference(),
+                request.getPaymentId(),
+                payment == null ? null : payment.getReference(),
+                payment == null ? null : payment.getType(),
+                request.getResolution()
         );
     }
 

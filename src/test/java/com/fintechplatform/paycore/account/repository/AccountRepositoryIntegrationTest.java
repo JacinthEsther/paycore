@@ -25,10 +25,6 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/**
- * The database rules must hold on their own, without the service's checks,
- * because concurrent requests can pass application checks together.
- */
 @Testcontainers
 @SpringBootTest
 class AccountRepositoryIntegrationTest {

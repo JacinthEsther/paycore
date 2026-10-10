@@ -10,12 +10,6 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 
-/**
- * One accounting side of a transaction: a positive amount debited from or
- * credited to one account. Entries are historical evidence, so there are
- * no setters and every column is insert-only; a mistake is corrected with
- * a new, compensating transaction.
- */
 @Entity
 @Table(name = "ledger_entries")
 public class LedgerEntry {

@@ -1,7 +1,6 @@
 import { useAuth } from '../../auth/AuthContext';
 import { useJourney } from '../../journey';
 
-/** Closes the compliance loop: back to the visitor's own customer account. */
 export function FinishCard() {
   const { logout } = useAuth();
   const { customerEmail, done } = useJourney();

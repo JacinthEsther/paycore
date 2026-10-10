@@ -37,7 +37,6 @@ export function Register() {
       const customer = await api<Customer>('/api/v1/customers', { body: form, auth: 'none' });
       rememberCustomer(customer.email);
       markDone('register');
-      // The email is prefilled from the walkthrough state, never put in the URL.
       navigate('/login?registered=1');
     } catch (err) {
       setError(errorMessage(err));

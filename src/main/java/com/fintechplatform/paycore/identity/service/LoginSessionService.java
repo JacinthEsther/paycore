@@ -1,6 +1,7 @@
 package com.fintechplatform.paycore.identity.service;
 
 import com.fintechplatform.paycore.customer.entity.Customer;
+import com.fintechplatform.paycore.device.entity.CustomerDevice;
 import com.fintechplatform.paycore.identity.config.SessionProperties;
 import com.fintechplatform.paycore.identity.entity.LoginSession;
 import com.fintechplatform.paycore.identity.exception.LoginSessionNotFoundException;
@@ -34,6 +35,17 @@ public class LoginSessionService {
             String ipAddress,
             String userAgent
     ) {
+        return createSession(customer, sessionTokenHash, ipAddress, userAgent, null);
+    }
+
+    @Transactional
+    public LoginSession createSession(
+            Customer customer,
+            String sessionTokenHash,
+            String ipAddress,
+            String userAgent,
+            CustomerDevice device
+    ) {
         Instant expiresAt =
                 Instant.now()
                         .plus(sessionProperties.getExpiration());
@@ -44,7 +56,8 @@ public class LoginSessionService {
                         sessionTokenHash,
                         expiresAt,
                         ipAddress,
-                        userAgent
+                        userAgent,
+                        device
                 );
 
         return loginSessionRepository.save(session);
@@ -83,12 +96,6 @@ public class LoginSessionService {
         loginSessionRepository.saveAll(sessions);
     }
 
-    /**
-     * Refuses a session that passed its absolute lifetime or sat idle for
-     * longer than the idle timeout, saying which, so the client can tell
-     * the user why they were signed out. Revoked sessions are not checked
-     * here.
-     */
     public void ensureNotTimedOut(LoginSession session) {
 
         if (session.isExpired()) {

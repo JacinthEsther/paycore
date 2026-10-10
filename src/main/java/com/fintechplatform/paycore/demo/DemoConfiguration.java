@@ -6,10 +6,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
-/**
- * Everything in this package is active only when
- * {@code paycore.demo.enabled=true}.
- */
 @Configuration
 @ConditionalOnProperty(name = "paycore.demo.enabled", havingValue = "true")
 @EnableConfigurationProperties(DemoProperties.class)

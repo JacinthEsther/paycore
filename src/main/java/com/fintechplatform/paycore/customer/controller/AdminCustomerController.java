@@ -10,10 +10,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-/**
- * Admin customer directory. Actions on a single customer stay on
- * {@link CustomerController} and the admin role endpoints.
- */
 @RestController
 @RequestMapping("/api/v1/admin/customers")
 @PreAuthorize("hasAuthority('CUSTOMER_READ')")

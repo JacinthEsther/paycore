@@ -11,10 +11,6 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
-/**
- * The signed-in customer's own profile. The customer id always comes from
- * the access token.
- */
 @RestController
 @RequestMapping("/api/v1/customers")
 public class CustomerProfileController {
@@ -41,10 +37,6 @@ public class CustomerProfileController {
                 .getCustomer(currentUser.customerId());
     }
 
-    /**
-     * Name, email and phone number; send only what changes. A new email
-     * is unverified until its link is used.
-     */
     @PatchMapping("/me")
     @PreAuthorize("hasAuthority('PROFILE_UPDATE')")
     public CustomerResponse updateMe(
@@ -55,10 +47,6 @@ public class CustomerProfileController {
         return customerService.updateProfile(currentUser.customerId(), request);
     }
 
-    /**
-     * Sends a new verification link (and retires the old one). At most one
-     * a minute and five a day.
-     */
     @PostMapping("/me/verification-email")
     @PreAuthorize("hasAuthority('PROFILE_UPDATE')")
     @ResponseStatus(HttpStatus.ACCEPTED)

@@ -23,25 +23,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.Locale;
 
-/**
- * Sign in (and sign up) with Google.
- *
- * The browser gets an ID token from Google; PayCore verifies it, then:
- *
- * <ul>
- *   <li>a Google account seen before signs in to its customer;</li>
- *   <li>otherwise, a customer with the same email is linked to it;</li>
- *   <li>otherwise, a new customer is created, active with a verified
- *       email but no phone number yet.</li>
- * </ul>
- *
- * Linking is where the risk is. If the existing customer never verified
- * their email, whoever set their password never proved they own the
- * address; an attacker could have registered it first, waiting for the
- * real owner to arrive ("pre-account takeover"). Google has now proved
- * ownership, so that password is disabled and every session of the
- * customer is ended, and the real owner continues with Google.
- */
 @Service
 public class GoogleSignInService {
 
@@ -75,11 +56,6 @@ public class GoogleSignInService {
         this.transactionTemplate = transactionTemplate;
     }
 
-    /**
-     * Not @Transactional: verifying the token may fetch Google's keys, which
-     * must not hold a database connection. The writes run in one
-     * transaction afterwards.
-     */
     public LoginResult signIn(String idToken, AuthenticationContext context) {
 
         GoogleIdentity google = verifier.verify(idToken);
@@ -93,8 +69,6 @@ public class GoogleSignInService {
         try {
             return transactionTemplate.execute(status -> signInVerified(google, context));
         } catch (DataIntegrityViolationException exception) {
-            // The same Google account signing in twice at once: the other
-            // request created the customer or identity first. Use it.
             return transactionTemplate.execute(status -> signInVerified(google, context));
         }
     }
@@ -147,7 +121,6 @@ public class GoogleSignInService {
                     .findIdentity(customer, IdentityProvider.PASSWORD)
                     .ifPresent(identityService::disable);
 
-            // Ends every session and refresh token, in this transaction.
             eventPublisher.publishEvent(new CustomerAccessRevokedEvent(customer.getId()));
 
             customer.verifyEmail();

@@ -10,28 +10,22 @@ import {
   type Session,
 } from '../api/client';
 import type { Customer, LoginResponse } from '../api/types';
+import { staffRoleOf } from '../staff';
 
 interface AuthState {
   session: Session | null;
   claims: AccessClaims | null;
   profile: Customer | null;
-  isAdmin: boolean;
-  /** ADMIN, OPERATIONS or SUPPORT: uses the back office. */
   isStaff: boolean;
-  /** Has the CUSTOMER role: uses the banking app. */
   isCustomer: boolean;
-  /** Whether the access token carries the permission. */
   can: (permission: string) => boolean;
   login: (email: string, password: string) => Promise<LoginResponse>;
   logout: (redirectTo?: string) => Promise<void>;
   reloadProfile: () => Promise<void>;
 }
 
-const STAFF_ROLES = ['ADMIN', 'OPERATIONS', 'SUPPORT'];
-
 const AuthContext = createContext<AuthState | null>(null);
 
-// Where a deliberate sign-out should land; read by RequireAuth.
 let signOutRedirect: string | null = null;
 
 export function getSignOutRedirect() {
@@ -73,12 +67,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return response;
   }, []);
 
-  /**
-   * Forgets the tokens locally at once, then revokes the LoginSession and
-   * its refresh tokens server-side. Clearing the session makes a protected
-   * page redirect, so {@code redirectTo} tells RequireAuth where to send
-   * the visitor instead of the generic sign-in page.
-   */
   const logout = useCallback(async (redirectTo?: string) => {
     const current = getSession();
     signOutRedirect = redirectTo ?? null;
@@ -91,7 +79,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           headers: { 'X-Session-Token': current.sessionToken },
         });
       } catch {
-        // Already signed out locally; nothing else to do if the API is down.
       }
     }
   }, []);
@@ -101,8 +88,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       session,
       claims,
       profile,
-      isAdmin: claims?.roles.includes('ADMIN') ?? false,
-      isStaff: claims?.roles.some((role) => STAFF_ROLES.includes(role)) ?? false,
+      isStaff: staffRoleOf(claims?.roles) !== null,
       isCustomer: claims?.roles.includes('CUSTOMER') ?? false,
       can: (permission: string) => claims?.permissions.includes(permission) ?? false,
       login,

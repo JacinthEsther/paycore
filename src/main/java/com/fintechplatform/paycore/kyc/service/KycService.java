@@ -18,6 +18,7 @@ import com.fintechplatform.paycore.kyc.entity.KycDocument;
 import com.fintechplatform.paycore.kyc.entity.KycProfile;
 import com.fintechplatform.paycore.kyc.entity.KycVerification;
 import com.fintechplatform.paycore.kyc.config.KycProperties;
+import com.fintechplatform.paycore.kyc.enums.KycDocumentType;
 import com.fintechplatform.paycore.kyc.enums.KycStatus;
 import com.fintechplatform.paycore.kyc.enums.KycVerificationType;
 import com.fintechplatform.paycore.kyc.enums.VerificationResult;
@@ -53,10 +54,6 @@ public class KycService {
     private static final Logger log =
             LoggerFactory.getLogger(KycService.class);
 
-    /**
-     * id breaks ties between attempts saved in the same instant; UUIDv7
-     * ids are time-ordered, so this stays chronological.
-     */
     private static final Sort NEWEST_FIRST =
             Sort.by(
                     Sort.Order.desc("createdAt"),
@@ -86,15 +83,6 @@ public class KycService {
         this.kycProperties = kycProperties;
     }
 
-    // ============================================================
-    // CUSTOMER
-    // ============================================================
-
-    /**
-     * The NOT_STARTED profile of a customer who has just registered. No
-     * "already exists?" query: a brand-new customer cannot have one, and
-     * uk_kyc_profile_customer would reject a second anyway.
-     */
     @Transactional
     public void createInitialProfile(UUID customerId) {
         kycProfileRepository.save(KycProfile.create(findCustomer(customerId)));
@@ -120,9 +108,6 @@ public class KycService {
         return toResponse(findProfileOfCustomer(customerId));
     }
 
-    /**
-     * NOT_STARTED or ADDITIONAL_INFO_REQUIRED -> IN_PROGRESS.
-     */
     @Transactional
     public KycResponse startKyc(UUID customerId) {
 
@@ -133,23 +118,11 @@ public class KycService {
         return toResponse(kycProfileRepository.save(profile));
     }
 
-
-    /**
-     * IN_PROGRESS -> SUBMITTED: the customer hands the package over for
-     * compliance review.
-     *
-     * <p>Requires a PASSED identity-number check (BVN or NIN) and at least
-     * one uploaded document. Both may come from an earlier round: after an
-     * information request the customer only adds what the reviewer asked
-     * for.
-     */
     @Transactional
     public KycResponse submitKyc(UUID customerId) {
 
         KycProfile profile = findProfileOfCustomerForUpdate(customerId);
 
-        // State first, so e.g. a VERIFIED profile reports its state rather
-        // than what it would be missing.
         if (!profile.isInProgress()) {
             transition(profile::submit);
         }
@@ -165,7 +138,6 @@ public class KycService {
             missing.add("identity document");
         }
 
-        // Customers who signed up with Google have none until they add one.
         if (profile.getCustomer().getPhoneNumber() == null) {
             missing.add("phone number on your profile");
         }
@@ -219,31 +191,6 @@ public class KycService {
         );
     }
 
-    /**
-     * Checks a BVN or NIN with the provider and records the attempt. The
-     * number itself is never persisted. Only allowed while KYC is
-     * IN_PROGRESS.
-     *
-     * <p>The result is one verification signal and never moves the KYC
-     * status: a PASSED check does not mean the whole package is ready.
-     * The customer submits separately and a reviewer decides. FAILED and
-     * PENDING results can be retried with corrected details.
-     *
-     * A provider outage throws and rolls back, leaving no attempt record.
-     *
-     * <p>Retry limit, per check type: once the customer has
-     * {@code maxFailedAttempts} FAILED checks of that type inside the
-     * rolling {@code attemptWindow}, further checks are refused before the
-     * provider is called, until the oldest of those failures leaves the
-     * window. The profile row is locked for the whole check so parallel
-     * requests cannot race past the limit.
-     *
-     * <p>Network limit, per check type: the client network
-     * ({@link ClientNetwork}) may make at most {@code ipMaxAttempts} checks
-     * of that type of any result, for any customer, within
-     * {@code ipAttemptWindow}. A per-network advisory lock serializes
-     * checks from one network across customers.
-     */
     private KycVerificationResponse verifyIdentityNumber(
             UUID customerId,
             KycVerificationType type,
@@ -253,8 +200,6 @@ public class KycService {
 
         String networkKey = ClientNetwork.key(clientIp);
 
-        // Lock order is always network, then profile, so two requests can
-        // never hold them in opposite orders and deadlock.
         kycVerificationRepository.lockClientNetwork(networkKey);
 
         KycProfile profile =
@@ -262,9 +207,13 @@ public class KycService {
                         .findByCustomerForUpdate(findCustomer(customerId))
                         .orElseThrow(KycNotFoundException::new);
 
-        if (!profile.isInProgress()) {
+        boolean upgrading = profile.isVerified() && !hasPassed(profile, type);
+
+        if (!profile.isInProgress() && !upgrading) {
             throw new InvalidKycStateException(
-                    type + " verification can only be performed while KYC is in progress"
+                    profile.isVerified()
+                            ? type + " is already verified"
+                            : type + " verification can only be performed while KYC is in progress"
             );
         }
 
@@ -297,6 +246,11 @@ public class KycService {
                 )
         );
 
+        if (upgrading && result.result() == VerificationResult.PASSED) {
+            profile.raiseTier(tierEarned(profile));
+            kycProfileRepository.save(profile);
+        }
+
         int failuresInWindow =
                 recentFailures.size()
                         + (result.result() == VerificationResult.FAILED ? 1 : 0);
@@ -314,6 +268,25 @@ public class KycService {
         );
     }
 
+    private int tierEarned(KycProfile profile) {
+
+        boolean bothNumbers =
+                hasPassed(profile, KycVerificationType.BVN) && hasPassed(profile, KycVerificationType.NIN);
+
+        if (!bothNumbers) {
+            return 1;
+        }
+
+        if (profile.isVerified()) {
+            return 2;
+        }
+
+        boolean proofOfAddress =
+                kycDocumentRepository.existsByKycProfileAndDocumentType(profile, KycDocumentType.PROOF_OF_ADDRESS);
+
+        return proofOfAddress ? 3 : 2;
+    }
+
     private boolean hasPassed(KycProfile profile, KycVerificationType type) {
 
         return kycVerificationRepository.existsByKycProfileAndVerificationTypeAndResult(
@@ -323,11 +296,6 @@ public class KycService {
         );
     }
 
-    /**
-     * FAILED checks of one type that count toward the limit: those inside
-     * the rolling window and, if an admin reset the limit, after that
-     * reset.
-     */
     private List<KycVerification> recentFailedAttempts(
             KycProfile profile,
             KycVerificationType type
@@ -336,10 +304,6 @@ public class KycService {
         return recentFailedAttempts(profile, type, countingSince(profile));
     }
 
-    /**
-     * Counted failures, oldest first. Takes {@code since} explicitly so a
-     * caller that also marks individual attempts uses the same instant.
-     */
     private List<KycVerification> recentFailedAttempts(
             KycProfile profile,
             KycVerificationType type,
@@ -355,12 +319,6 @@ public class KycService {
                 );
     }
 
-    /**
-     * Refuses the check if this network already made
-     * {@code ipMaxAttempts} checks of this type (any result, any customer)
-     * within the rolling {@code ipAttemptWindow}. The caller must hold the
-     * network lock so concurrent requests cannot race past the count.
-     */
     private void enforceNetworkLimit(
             String networkKey,
             KycVerificationType type
@@ -403,10 +361,6 @@ public class KycService {
         throw new BvnIpRateLimitExceededException(retryAfter, type);
     }
 
-    /**
-     * FAILED BVN checks after this instant count toward the limit: the
-     * start of the rolling window, or the last admin reset if later.
-     */
     private Instant countingSince(KycProfile profile) {
 
         Instant windowStart =
@@ -419,23 +373,11 @@ public class KycService {
                 : windowStart;
     }
 
-    /**
-     * When a limited customer may try again: once the oldest counted
-     * failure leaves the window.
-     */
     private Instant retryAfter(Instant oldestCountedFailure) {
 
         return oldestCountedFailure.plus(kycProperties.getAttemptWindow());
     }
 
-    // ============================================================
-    // COMPLIANCE REVIEW
-    // ============================================================
-
-    /**
-     * Reviewer's queue, most recently changed first. A null status lists
-     * profiles in every state.
-     */
     @Transactional(readOnly = true)
     public KycReviewQueueResponse listProfiles(
             KycStatus status,
@@ -489,9 +431,6 @@ public class KycService {
         );
     }
 
-    /**
-     * SUBMITTED -> UNDER_REVIEW: a reviewer picks up the package.
-     */
     @Transactional
     public KycResponse startReview(UUID kycId, UUID reviewerId) {
 
@@ -507,7 +446,9 @@ public class KycService {
 
         KycProfile profile = findReviewableProfile(kycId, reviewerId);
 
-        transition(() -> profile.approve(reviewerId));
+        int tier = tierEarned(profile);
+
+        transition(() -> profile.approve(reviewerId, tier));
 
         return toResponse(kycProfileRepository.save(profile));
     }
@@ -522,10 +463,6 @@ public class KycService {
         return toResponse(kycProfileRepository.save(profile));
     }
 
-    /**
-     * UNDER_REVIEW -> ADDITIONAL_INFO_REQUIRED. The customer sees the
-     * reason, restarts KYC, adds what is missing and submits again.
-     */
     @Transactional
     public KycResponse requestAdditionalInformation(
             UUID kycId,
@@ -543,12 +480,6 @@ public class KycService {
         return toResponse(kycProfileRepository.save(profile));
     }
 
-    /**
-     * Gives the customer a fresh set of BVN attempts, e.g. after support
-     * confirms they were genuine typos. Earlier failures stay in the
-     * history but stop counting. Locks the profile so an in-flight BVN
-     * check cannot overwrite the reset.
-     */
     @Transactional
     public BvnAttemptsResetResponse resetBvnAttempts(
             UUID kycId,
@@ -586,10 +517,6 @@ public class KycService {
         return getAttempts(kycId, KycVerificationType.BVN, page, size);
     }
 
-    /**
-     * Read-only admin view of one check type's retry limit and full
-     * history, using exactly the counting rule the verify methods enforce.
-     */
     @Transactional(readOnly = true)
     public BvnAttemptsResponse getAttempts(
             UUID kycId,
@@ -605,8 +532,6 @@ public class KycService {
 
         Instant since = countingSince(profile);
 
-        // Summary: the same query the verify methods enforce with,
-        // independent of which page of history is requested. Oldest first.
         List<KycVerification> counted = recentFailedAttempts(profile, type, since);
 
         Page<KycVerification> history =
@@ -651,19 +576,11 @@ public class KycService {
         );
     }
 
-    /**
-     * Same predicate as the repository query behind the limit: FAILED and
-     * strictly after the counting start.
-     */
     private boolean countsTowardLimit(KycVerification attempt, Instant since) {
 
         return attempt.getResult() == VerificationResult.FAILED
                 && attempt.getCreatedAt().isAfter(since);
     }
-
-    // ============================================================
-    // HELPERS
-    // ============================================================
 
     private KycProfile findReviewableProfile(UUID kycId, UUID reviewerId) {
 

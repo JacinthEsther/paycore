@@ -4,11 +4,6 @@ import com.fintechplatform.paycore.kyc.enums.KycVerificationType;
 
 import java.time.Instant;
 
-/**
- * Too many FAILED identity-number checks (BVN, or NIN) in the rolling
- * window. {@code retryAfter} is when the oldest counted failure leaves
- * the window.
- */
 public class BvnAttemptLimitExceededException extends RuntimeException {
 
     private final Instant retryAfter;

@@ -9,9 +9,8 @@ import { markDone, useJourney } from '../journey';
 
 type IdType = 'BVN' | 'NIN';
 
-// Test numbers known to both the simulated provider and Dojah's sandbox.
-const TEST_NUMBERS: Record<IdType, string> = { BVN: '22222222222', NIN: '70123456789' };
-const TEST_PERSON = { firstName: 'John', lastName: 'Doe', dateOfBirth: '1990-01-01' };
+export const TEST_NUMBERS: Record<IdType, string> = { BVN: '22222222222', NIN: '70123456789' };
+export const TEST_PERSON = { firstName: 'John', lastName: 'Doe', dateOfBirth: '1990-01-01' };
 
 const FLOW: KycStatus[] = ['NOT_STARTED', 'IN_PROGRESS', 'SUBMITTED', 'UNDER_REVIEW', 'VERIFIED'];
 
@@ -155,7 +154,7 @@ export function Kyc() {
             <code>KYC_REVIEW</code> permission, and the backend also blocks reviewers from acting on their own profile.
           </p>
           <p>
-            Next, open your naira account. Then sign in as the compliance admin, review this
+            Next, open your naira account. Then sign in as the Compliance Officer, review this
             application yourself and activate the account.
           </p>
           <Link className="btn btn-primary" to="/app">
@@ -169,7 +168,7 @@ export function Kyc() {
           <div className="big-status">
             <StatusBadge status="VERIFIED" />
           </div>
-          <p>A reviewer approved your identity verification. You've been through the whole flow, as the customer and as the admin.</p>
+          <p>A reviewer approved your identity verification. You've been through the whole flow, as the customer and as Compliance.</p>
           <p className="muted small">Updated {kyc !== 'none' && kyc ? formatDate(kyc.updatedAt) : ''}</p>
           <Link className="btn btn-ghost" to="/">
             Back to the overview
@@ -384,8 +383,7 @@ function DocumentUpload({ documents, onUploaded }: { documents: KycDocument[]; o
   );
 }
 
-/** A clearly fake ID card drawn in the browser, as a PNG. */
-function sampleDocument(type: KycDocumentType): Promise<Blob> {
+export function sampleDocument(type: KycDocumentType): Promise<Blob> {
   const canvas = document.createElement('canvas');
   canvas.width = 640;
   canvas.height = 400;

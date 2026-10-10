@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, errorMessage } from '../../api/client';
-import type { Account } from '../../api/types';
+import type { Account, KycTier } from '../../api/types';
 import { useAuth } from '../../auth/AuthContext';
 import { refreshBanking, useBanking, useStatement } from '../../banking';
 import { TransactionList } from '../../components/TransactionList';
-import { CopyButton, formatAccountNumber, formatMoney, humanize, Icon, Notice } from '../../components/ui';
+import { CopyButton, formatAccountNumber, formatDay, formatMoney, humanize, Icon, Notice } from '../../components/ui';
 import { markDone, useJourney } from '../../journey';
 
 const HIDE_KEY = 'paycore.hideBalance';
@@ -30,6 +30,8 @@ export function BankHome() {
     <div className="home-grid">
       <BalanceCard account={account} balance={balance?.balance ?? null} />
 
+      <TierStrip />
+
       <nav className="quick-actions" aria-label="Quick actions">
         <Link to="/app/transfer" className="quick-action">
           <span className="qa-icon">
@@ -48,6 +50,12 @@ export function BankHome() {
             <Icon name="receive" />
           </span>
           Receive
+        </Link>
+        <Link to="/app/bills" className="quick-action">
+          <span className="qa-icon">
+            <Icon name="bolt" />
+          </span>
+          Bills
         </Link>
         <Link to="/app/transactions" className="quick-action">
           <span className="qa-icon">
@@ -83,7 +91,6 @@ function BalanceCard({ account, balance }: { account: Account; balance: number |
       try {
         localStorage.setItem(HIDE_KEY, String(!h));
       } catch {
-        // Not remembered; fine.
       }
       return !h;
     });
@@ -106,6 +113,36 @@ function BalanceCard({ account, balance }: { account: Account; balance: number |
         <CopyButton text={account.accountNumber} label="Copy" />
       </div>
     </section>
+  );
+}
+
+function TierStrip() {
+  const [tier, setTier] = useState<KycTier | null>(null);
+
+  useEffect(() => {
+    api<KycTier>('/api/v1/kyc/tier')
+      .then(setTier)
+      .catch(() => setTier(null));
+  }, []);
+
+  if (!tier) return null;
+
+  const pending = tier.upgrade?.status === 'PENDING' ? tier.upgrade : null;
+
+  return (
+    <Link to="/app/limits" className="tier-strip">
+      <span>
+        <strong>Tier {tier.tier}</strong>
+        <span className="muted small block">
+          {pending
+            ? pending.needsCloserLook
+              ? `Tier ${pending.requestedTier} request: our team is taking a closer look`
+              : `Tier ${pending.requestedTier} request: upgraded by ${formatDay(pending.reviewDueAt)}`
+            : `Send up to ${formatMoney(tier.dailySend, tier.currency)} a day`}
+        </span>
+      </span>
+      <span className="btn btn-ghost btn-sm">{tier.nextTier && !pending ? 'Upgrade ›' : 'View ›'}</span>
+    </Link>
   );
 }
 
@@ -133,10 +170,6 @@ function RecentActivity({ account }: { account: Account }) {
   );
 }
 
-/**
- * Before the account can be used: verify identity, open the account, wait
- * for compliance to activate it.
- */
 function Onboarding({ account, kycStatus }: { account: Account | null; kycStatus: string | null }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -209,8 +242,8 @@ function Onboarding({ account, kycStatus }: { account: Account | null; kycStatus
               Compliance activates your account once your identity is verified. Then you can receive and send money.
             </p>
             {account && (
-              <Link className="small" to="/login?as=staff">
-                Demo: sign in as the compliance admin to do it →
+              <Link className="small" to="/login?as=staff&staff=compliance%40paycore.demo">
+                Demo: sign in as the Compliance Officer to do it →
               </Link>
             )}
           </div>
